@@ -405,7 +405,24 @@ function App() {
   }, [players])
 
   const spendMoney = useCallback((playerId, amount) => {
-    setPlayers(ps => ps.map(p => p.id === playerId ? { ...p, money: p.money - amount } : p))
+    setPlayers(ps => {
+      const updatedPlayers = ps.map(p => p.id === playerId ? { ...p, money: p.money - amount } : p)
+      
+      // Give +2€ to each player with a contract when another player spends money
+      if (amount > 0) {
+        return updatedPlayers.map(p => {
+          if (p.id !== playerId) {
+            const contractCount = p.items.filter(item => item.id === 'contrat').length
+            if (contractCount > 0) {
+              return { ...p, money: p.money + (2 * contractCount) }
+            }
+          }
+          return p
+        })
+      }
+      
+      return updatedPlayers
+    })
   }, [])
 
   const modifyPosition = useCallback((playerId, delta) => {
