@@ -1,0 +1,93 @@
+.app-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 30%, #1a1060 0%, #0d0826 50%, #060414 100%);
+  font-family: 'Fredoka One', 'Nunito', 'Segoe UI', sans-serif;
+}
+
+.top-nav {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  gap: 10px;
+  background: rgba(10, 8, 30, 0.7);
+  border: 2px solid rgba(240, 192, 64, 0.3);
+  border-radius: 40px;
+  padding: 6px 10px;
+  backdrop-filter: blur(12px);
+}
+
+.nav-btn {
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 30px;
+  color: #aaa;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  padding: 6px 20px;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+.nav-btn.active {
+  background: linear-gradient(135deg, #c8860a, #f0c040);
+  border-color: #f0c040;
+  color: #1a1a2e;
+  box-shadow: 0 0 16px rgba(240, 192, 64, 0.5);
+}
+
+.game-layout {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.center-area {
+  position: absolute;
+  top: 49%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 640px;
+  height: 600px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-corner {
+  position: absolute;
+  z-index: 10;
+}
+
+.corner-tl { top: 20px; left: 20px; }
+.corner-tr { top: 20px; right: 20px; }
+.corner-bl { bottom: 70px; left: 20px; }
+.corner-br { bottom: 70px; right: 20px; }
+
+.player-top {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+}
+
+.shop-layout {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.tab-panel {
+  will-change: transform, opacity;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity   0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
