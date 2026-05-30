@@ -78,8 +78,9 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        padding: "22px 20px",
-        gap: "16px",
+        justifyContent: activePlayer ? "center" : "flex-start", // Garde le centrage vertical
+        padding: "24px 20px", // Réduit pour gagner de l'espace vertical
+        gap: "18px", // Écartement plus compact et propre
         overflowY: "auto",
       }}
     >
@@ -88,7 +89,7 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
         animate={{ y: 0, opacity: 1 }}
         style={{
           fontFamily: '"Fredoka One", "Nunito", sans-serif',
-          fontSize: "2.8rem",
+          fontSize: "3.4rem", // Réduit de 4.2rem à 3.4rem
           fontWeight: 900,
           margin: 0,
           background: "linear-gradient(135deg, #f0c040, #ff6b6b, #a855f7)",
@@ -107,23 +108,23 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
         style={{
           background: "rgba(26,26,46,0.85)",
           border: `2px solid ${activePlayer ? color + "66" : "rgba(255,255,255,0.1)"}`,
-          borderRadius: "16px",
-          padding: "10px 24px",
+          borderRadius: "18px",
+          padding: "12px 28px", // Plus compact
           backdropFilter: "blur(10px)",
           display: "flex",
           alignItems: "center",
-          gap: "12px",
+          gap: "14px",
         }}
       >
         {activePlayer ? (
           <>
             <span
               style={{
-                fontSize: "1.9rem",
-                filter: `drop-shadow(0 0 6px ${color})`,
+                fontSize: "2.3rem", // Réduit
+                filter: `drop-shadow(0 0 7px ${color})`,
               }}
             >
-              {PLAYER_AVATARS[activePlayer.colorIndex ?? 0]}
+              {activePlayer.avatar ?? PLAYER_AVATARS[activePlayer.colorIndex ?? 0]}
             </span>
             <div
               style={{ display: "flex", flexDirection: "column", gap: "2px" }}
@@ -131,13 +132,14 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
               <span
                 style={{
                   color: "#aaa",
-                  fontSize: "0.72rem",
+                  fontSize: "0.85rem",
                   letterSpacing: "1.5px",
+                  fontWeight: "bold",
                 }}
               >
                 JOUEUR ACTIF
               </span>
-              <span style={{ color, fontWeight: 900, fontSize: "1.15rem" }}>
+              <span style={{ color, fontWeight: 900, fontSize: "1.35rem" }}>
                 {activePlayer.name}
               </span>
             </div>
@@ -145,8 +147,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
               style={{
                 color: "#FFD700",
                 fontWeight: 900,
-                fontSize: "1.1rem",
-                marginLeft: "8px",
+                fontSize: "1.3rem",
+                marginLeft: "10px",
               }}
             >
               💰 {activePlayer.money}€
@@ -154,14 +156,14 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             {shopDiscountRounds > 0 && (
               <span
                 style={{
-                  marginLeft: "8px",
+                  marginLeft: "10px",
                   background: "rgba(59,130,246,0.18)",
                   border: "1px solid rgba(59,130,246,0.35)",
                   borderRadius: "12px",
-                  padding: "4px 10px",
+                  padding: "4px 12px",
                   color: "#bfdbfe",
-                  fontSize: "0.75rem",
-                  fontWeight: 700,
+                  fontSize: "0.9rem",
+                  fontWeight: 800,
                 }}
               >
                 SOLDES {shopDiscountRounds} tour{shopDiscountRounds > 1 ? 's' : ''}
@@ -170,23 +172,23 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             {boughtId && (
               <span
                 style={{
-                  marginLeft: "8px",
+                  marginLeft: "10px",
                   background: "rgba(34,197,94,0.2)",
                   border: "1px solid #22c55e",
-                  borderRadius: "10px",
-                  padding: "3px 10px",
+                  borderRadius: "12px",
+                  padding: "4px 12px",
                   color: "#4ade80",
-                  fontSize: "0.78rem",
-                  fontWeight: 700,
+                  fontSize: "0.9rem",
+                  fontWeight: 800,
                 }}
               >
-                ✓ 1 achat effectué
+                ✓ Acheté
               </span>
             )}
           </>
         ) : (
           <span
-            style={{ color: "#555", fontStyle: "italic", fontSize: "0.92rem" }}
+            style={{ color: "#555", fontStyle: "italic", fontSize: "1.1rem" }}
           >
             🔒 Accessible uniquement sur une case Boutique
           </span>
@@ -203,26 +205,25 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            gap: "16px",
+            gap: "20px",
           }}
         >
-          <div style={{ fontSize: "4rem" }}>🔒</div>
+          <div style={{ fontSize: "5rem" }}>🔒</div>
           <div
             style={{
               color: "#555",
-              fontSize: "1rem",
+              fontSize: "1.2rem",
               textAlign: "center",
-              maxWidth: "340px",
+              maxWidth: "400px",
             }}
           >
-            Seul le joueur actif peut acheter lorsqu'il tombe sur une case
-            Boutique.
+            Seul le joueur actif peut acheter lorsqu'il tombe sur une case Boutique.
           </div>
         </motion.div>
       ) : isFinished ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-          <div style={{ fontSize: '3rem' }}>🏁</div>
-          <div style={{ color: '#aaa', fontSize: '1rem', textAlign: 'center', maxWidth: '340px' }}>Joueur arrivé — la Boutique est désactivée.</div>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
+          <div style={{ fontSize: '3.5rem' }}>🏁</div>
+          <div style={{ color: '#aaa', fontSize: '1.2rem', textAlign: 'center', maxWidth: '400px' }}>Joueur arrivé — la Boutique est désactivée.</div>
         </motion.div>
       ) : (
         <>
@@ -230,9 +231,9 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${cardCount <= 3 ? 3 : 4}, 1fr)`,
-              gap: "16px",
+              gap: "18px", // Réduit pour un meilleur ajustement global
               width: "100%",
-              maxWidth: "980px",
+              maxWidth: cardCount <= 3 ? "1050px" : "1320px",
             }}
           >
             <AnimatePresence mode="popLayout">
@@ -272,8 +273,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                           : canAfford
                             ? "2px solid rgba(240,192,64,0.4)"
                             : "2px solid rgba(255,255,255,0.07)",
-                      borderRadius: "20px",
-                      padding: "20px 14px",
+                      borderRadius: "22px",
+                      padding: "22px 16px", // Plus équilibré
                       textAlign: "center",
                       backdropFilter: "blur(8px)",
                       transition: "all 0.25s",
@@ -291,9 +292,9 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                     {item.special && (
                       <div
                         style={{
-                          fontSize: "0.62rem",
+                          fontSize: "0.8rem",
                           letterSpacing: "1.5px",
-                          color: "#a855f7",
+                          color: "#c084fc",
                           fontWeight: 800,
                           marginBottom: "6px",
                           textTransform: "uppercase",
@@ -309,8 +310,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                           : {}
                       }
                       style={{
-                        fontSize: "3.2rem",
-                        marginBottom: "8px",
+                        fontSize: "3.8rem", // Réduit un peu
+                        marginBottom: "10px",
                         lineHeight: 1,
                       }}
                     >
@@ -320,18 +321,18 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                       style={{
                         color: "#fff",
                         fontWeight: 800,
-                        fontSize: "1.1rem",
+                        fontSize: "1.35rem", // Idéal pour la lisibilité
                         marginBottom: "6px",
-                        letterSpacing: "0.4px",
+                        letterSpacing: "0.5px",
                       }}
                     >
                       {item.name}
                     </div>
                     <div
                       style={{
-                        color: "#aaa",
-                        fontSize: "0.82rem",
-                        marginBottom: "12px",
+                        color: "#bbb",
+                        fontSize: "1rem", // Légèrement plus condensé
+                        marginBottom: "14px",
                         lineHeight: 1.4,
                       }}
                     >
@@ -343,7 +344,7 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
-                        gap: "10px",
+                        gap: "12px",
                         width: "100%",
                       }}
                     >
@@ -351,10 +352,10 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                         style={{
                           background: "rgba(240,192,64,0.14)",
                           border: "1px solid rgba(240,192,64,0.38)",
-                          borderRadius: "18px",
-                          padding: "4px 14px",
+                          borderRadius: "20px",
+                          padding: '5px 16px',
                           color: "#f0c040",
-                          fontSize: "1rem",
+                          fontSize: "1.2rem",
                           fontWeight: 900,
                         }}
                       >
@@ -364,11 +365,12 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                         <span
                           style={{
                             color: '#a5b4fc',
-                            fontSize: '0.72rem',
+                            fontSize: '0.85rem',
                             marginTop: '4px',
+                            fontWeight: 700
                           }}
                         >
-                          50% OFF – {shopDiscountRounds} tour{shopDiscountRounds > 1 ? 's' : ''} restants
+                          50% OFF – {shopDiscountRounds} tour{shopDiscountRounds > 1 ? 's' : ''}
                         </span>
                       )}
                       <motion.button
@@ -383,15 +385,15 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                               : "rgba(255,255,255,0.07)",
                           color: canAfford && !boughtId ? "#fff" : "#555",
                           border: "none",
-                          borderRadius: "16px",
-                          padding: "8px 22px",
+                          borderRadius: "18px",
+                          padding: "10px 24px",
                           fontWeight: 800,
                           cursor:
                             canAfford && !boughtId ? "pointer" : "not-allowed",
-                          fontSize: "0.95rem",
+                          fontSize: "1.15rem",
                           boxShadow:
                             canAfford && !boughtId && !isBought
-                              ? "0 3px 10px rgba(230,57,70,0.45)"
+                              ? "0 4px 12px rgba(230,57,70,0.45)"
                               : "none",
                           transition: "all 0.2s",
                         }}
@@ -413,8 +415,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "16px",
-              marginTop: "4px",
+              gap: "20px",
+              marginTop: "10px",
             }}
           >
             <motion.button
@@ -428,16 +430,16 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                   : "rgba(255,255,255,0.06)",
                 border: canReroll
                   ? "2px solid #38bdf8"
-                  : "2px solid transparent",
-                borderRadius: "30px",
-                padding: "10px 32px",
+                  : "transparent",
+                borderRadius: "35px",
+                padding: "12px 36px",
                 color: canReroll ? "#fff" : "#555",
                 fontWeight: 800,
-                fontSize: "0.95rem",
+                fontSize: "1.15rem",
                 letterSpacing: "1px",
                 cursor: canReroll ? "pointer" : "not-allowed",
                 boxShadow: canReroll
-                  ? "0 3px 16px rgba(14,165,233,0.45)"
+                  ? "0 4px 18px rgba(14,165,233,0.45)"
                   : "none",
                 transition: "all 0.2s",
               }}
@@ -446,14 +448,14 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             </motion.button>
             <span
               style={{
-                color: canReroll ? "#38bdf8" : "#444",
-                fontSize: "0.85rem",
+                color: canReroll ? "#38bdf8" : "#555",
+                fontSize: "1.1rem",
                 fontWeight: 700,
               }}
             >
               Coût : {rerollCost}€
               {rerollCount > 0 && (
-                <span style={{ color: "#555", marginLeft: "6px" }}>
+                <span style={{ color: "#777", marginLeft: "6px" }}>
                   ({rerollCount}x)
                 </span>
               )}
@@ -461,8 +463,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
             {boughtId && (
               <span
                 style={{
-                  color: "#555",
-                  fontSize: "0.8rem",
+                  color: "#666",
+                  fontSize: "1rem",
                   fontStyle: "italic",
                 }}
               >
@@ -480,11 +482,11 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                 style={{
                   background: "linear-gradient(135deg, #22c55e22, #16a34a14)",
                   border: "1px solid #22c55e",
-                  borderRadius: "12px",
-                  padding: "8px 20px",
+                  borderRadius: "14px",
+                  padding: "10px 22px",
                   color: "#4ade80",
                   fontWeight: 700,
-                  fontSize: "1rem",
+                  fontSize: "1.2rem",
                 }}
               >
                 {ALL_SHOP_ITEMS.find((i) => i.id === flash)?.icon} Acheté par{" "}
@@ -498,10 +500,11 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
               onClick={onDone}
               style={{
                 background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
-                border: "2px solid #a78bfa", borderRadius: "22px",
-                padding: "9px 28px", color: "#fff", fontWeight: 900,
-                fontSize: "0.9rem", cursor: "pointer", letterSpacing: "1.5px",
-                boxShadow: "0 4px 14px rgba(124,58,237,0.5)", marginTop: "4px",
+                border: "2px solid #a78bfa", borderRadius: "28px",
+                padding: "12px 36px", color: "#fff", fontWeight: 900,
+                fontSize: "1.15rem",
+                cursor: "pointer", letterSpacing: "1.5px",
+                boxShadow: "0 4px 14px rgba(124,58,237,0.5)", marginTop: "12px",
               }}
             >▶ Fermer la boutique</motion.button>
           )}

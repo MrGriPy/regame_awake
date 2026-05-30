@@ -80,11 +80,9 @@ export default function GameMat({
   };
 
   const handleRoll = () => {
-    // Allow rolling even if an item was used this turn — using an item should not block the roll.
     if (isRollingRef.current || !activePlayer || isCursedSelected || isInstantItem || isFinishedActive) return;
     isRollingRef.current = true;
     setIsRollingState(true);
-    // Deselect any active item when starting a roll so items cannot be re-selected during the roll
     setActiveItemUid(null);
     const chosenItem = activeItemUid
       ? activePlayer.items.find(i => i.uid === activeItemUid) ?? null
@@ -92,7 +90,6 @@ export default function GameMat({
     pendingItemRef.current = chosenItem
       ? { item: chosenItem, playerId: activePlayer.id }
       : null;
-    // Mark that an item/roll action has occurred this turn so active items are hidden until end of turn
     setUsedItemThisTurn(true);
     setRollExtraDie(isExtraDie);
     setResult(null);
@@ -135,7 +132,7 @@ export default function GameMat({
     const item = pending?.item ?? null;
     const rollPlayerId = pending?.playerId ?? null;
     const ap = activePlayerRef.current;
-    const { onConsumeItem, onClearCurse } = cbsRef.current;
+    const { onConsumeItem, onClearCurse, onModifyPosition } = cbsRef.current;
 
     if (ap?.cursed) onClearCurse?.(ap.id);
 
@@ -147,9 +144,11 @@ export default function GameMat({
       if (item.id === 'teleporteur') {
         const die = res.die1;
         const delta = die <= 2 ? -3 : die <= 5 ? 5 : 8;
-        const label = die <= 2 ? `🌀 Dé: ${die} → ↙ -3 cases` : die <= 5 ? `🌀 Dé: ${die} → ↗ +5 cases` : `🌀 Dé: ${die} → 🚀 +8 cases`;
-        cbsRef.current.onModifyPosition?.(rollPlayerId, delta);
+        const label = die <= 2 ? `🌀 Dé: ${die} → ↙ Reculer de 3 cases` : die <= 5 ? `🌀 Dé: ${die} → ↗ Avancer de 5 cases` : `🌀 Dé: ${die} → 🚀 Avancer de 8 cases`;
+        
+        onModifyPosition?.(rollPlayerId, delta);
         setTeleporteurLabel(label);
+        setResult({ ...res, total: 0 });
       } else if (item.id === 'mushroom') {
         const base = { ...res, bonus: 3, bonusLabel: '+3 🍄', total: Math.max(0, res.total + 3) };
         setResult(applyBoost(applyAbon(base)));
@@ -167,10 +166,11 @@ export default function GameMat({
   const rollBtnActive = activePlayer && !isCursedSelected && !isInstantItem && !isFinishedActive;
 
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '490px' }}>
-
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '460px', marginTop: '60px' }}>
+      
+      {/* 1. BANDEAU DE JOUER ACTIF EN HAUT */}
       <div style={{
-        width: '460px', height: '76px', flexShrink: 0, overflow: 'hidden',
+        width: '460px', height: '36px', flexShrink: 0, overflow: 'hidden',
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         justifyContent: 'center', gap: '6px',
       }}>
@@ -188,60 +188,8 @@ export default function GameMat({
                 letterSpacing: '1.5px', textTransform: 'uppercase',
                 textShadow: `0 0 10px ${isCursed ? '#ff6b6b88' : '#f0c04088'}`,
               }}>
-                {isCursed ? '☠️ Dés Maudits —' : '🎯'} Tour de {activePlayer.name}
+                {isCursed ? '☠️ Dés Maudits — ' : '🎯 '}Tour de {activePlayer.name}
               </div>
-
-              {( (activeItems.length > 0 && !usedItemThisTurn && !isRollingState) || passiveItems.length > 0) && (
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {(!usedItemThisTurn && !isRollingState ? activeItems : []).map(item => {
-                    const on = activeItemUid === item.uid;
-                    return (
-                      <motion.button
-                        key={item.uid}
-                        whileTap={{ scale: 0.88 }}
-                        onClick={() => {
-                          if (isFinishedActive) return;
-                          // Prevent selecting during a roll
-                          if (isRollingState) return;
-                          // If an item has already been used this turn, prevent selecting another one
-                          if (usedItemThisTurn && activeItemUid !== item.uid) return;
-                          setActiveItemUid(prev => prev === item.uid ? null : item.uid);
-                          setCurseTargetId(null);
-                          setItemTargetId(null);
-                        }}
-                        title={`${item.name} — ${item.desc}`}
-                        style={{
-                          background: on
-                            ? 'linear-gradient(135deg, #f0c040, #d97706)'
-                            : 'rgba(255,255,255,0.12)',
-                          border: on ? '2px solid #f0c040' : '2px solid rgba(255,255,255,0.2)',
-                          borderRadius: '10px', padding: '4px 10px',
-                          cursor: isRollingState ? 'not-allowed' : (usedItemThisTurn && !on ? 'not-allowed' : 'pointer'), fontSize: '1.2rem', lineHeight: 1,
-                          boxShadow: on ? '0 0 14px #f0c04099' : 'none',
-                          transition: 'all 0.18s',
-                          display: 'flex', alignItems: 'center', gap: '4px',
-                        }}
-                      >
-                        {item.icon}
-                        {on && <span style={{ fontSize: '0.65rem', color: '#1a1a2e', fontWeight: 900 }}>ACTIF</span>}
-                      </motion.button>
-                    );
-                  })}
-                  {passiveItems.map(item => (
-                    <div key={item.uid} title={`${item.name} — ${item.desc}`} style={{
-                      background: 'rgba(34,197,94,0.12)',
-                      border: '2px solid rgba(34,197,94,0.45)',
-                      borderRadius: '10px', padding: '4px 10px',
-                      fontSize: '1.2rem', lineHeight: 1,
-                      display: 'flex', alignItems: 'center', gap: '4px',
-                    }}>
-                      {item.icon}
-                      <span style={{ fontSize: '0.58rem', color: '#4ade80', fontWeight: 900, letterSpacing: '0.5px' }}>PASSIF</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
             </motion.div>
           ) : (
             <motion.div
@@ -255,6 +203,7 @@ export default function GameMat({
         </AnimatePresence>
       </div>
 
+      {/* 2. LE TAPIS DE JEU CENTRAL */}
       <div style={{
         position: 'relative',
         width: '460px', height: '410px', flexShrink: 0,
@@ -283,7 +232,104 @@ export default function GameMat({
           }}>{gameName}</span>
         </div>
 
-        <div style={{ flex: 1, width: '100%', position: 'relative', zIndex: 1 }}>
+        {/* RESTRUCTURATION DES SÉLECTEURS DE CIBLES EN COLONNE CENTRÉE SANS SE SUPERPOSER */}
+        <div style={{ 
+          position: 'absolute', 
+          top: '60px', 
+          bottom: '80px', 
+          left: '10px', 
+          right: '10px', 
+          zIndex: 10, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          pointerEvents: 'none'
+        }}>
+          <AnimatePresence>
+            {isCursedSelected && targetableOtherPlayers.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%', pointerEvents: 'auto' }}
+              >
+                <div style={{ color: '#ff6b6b', fontSize: '0.85rem', letterSpacing: '1.5px', fontWeight: 900, textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                  ☠️ CHOISIR UNE CIBLE
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '240px' }}>
+                  {targetableOtherPlayers.map(p => {
+                    const idx = p.id - 1;
+                    const isTarget = curseTargetId === p.id;
+                    return (
+                      <motion.button
+                        key={p.id}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => setCurseTargetId(prev => prev === p.id ? null : p.id)}
+                        style={{
+                          width: '100%',
+                          background: isTarget ? 'linear-gradient(135deg, #dc2626, #991b1b)' : 'rgba(15,15,30,0.9)',
+                          border: isTarget ? `2px solid ${PLAYER_COLORS[idx]}` : '2px solid rgba(255,255,255,0.2)',
+                          borderRadius: '12px', padding: '8px 12px',
+                          cursor: 'pointer', fontSize: '1rem', color: '#fff', fontWeight: 800,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+                          boxShadow: isTarget ? '0 0 12px #dc2626cc' : '0 4px 8px rgba(0,0,0,0.4)',
+                        }}
+                      >
+                        <span style={{ fontSize: '1.4rem' }}>{PLAYER_AVATARS[idx]}</span>
+                        <span>{p.name}</span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
+            {isInstantItem && needsTarget && targetableOtherPlayers.length > 0 && !result && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%', pointerEvents: 'auto' }}
+              >
+                <div style={{ color: '#f0c040', fontSize: '0.85rem', letterSpacing: '1.5px', fontWeight: 900, textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                  🎯 CHOISIR UNE CIBLE
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '240px' }}>
+                  {targetableOtherPlayers.map(p => {
+                    const pc = PLAYER_COLORS[p.colorIndex ?? 0];
+                    const av = p.avatar ?? PLAYER_AVATARS[p.colorIndex ?? 0];
+                    const isTgt = itemTargetId === p.id;
+                    return (
+                      <motion.button 
+                        key={p.id} 
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => setItemTargetId(prev => prev === p.id ? null : p.id)}
+                        style={{
+                          width: '100%',
+                          background: isTgt ? `${pc}d0` : 'rgba(15,15,30,0.9)',
+                          border: `2px solid ${isTgt ? '#fff' : 'rgba(255,255,255,0.2)'}`,
+                          borderRadius: '12px', padding: '8px 12px', cursor: 'pointer',
+                          color: '#fff', fontWeight: 800, fontSize: '1rem',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+                          boxShadow: isTgt ? `0 0 12px ${pc}cc` : '0 4px 8px rgba(0,0,0,0.4)',
+                        }}
+                      >
+                        <span style={{ fontSize: '1.4rem' }}>{av}</span>
+                        <span>{p.name}</span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* LE CANVAS DE DÉS (Masqué pendant la sélection des cibles pour libérer le champ visuel) */}
+        <div style={{ 
+          flex: 1, 
+          width: '100%', 
+          position: 'relative', 
+          zIndex: 1,
+          opacity: ((isCursedSelected || (isInstantItem && needsTarget)) && targetableOtherPlayers.length > 0 && !result) ? 0 : 1,
+          transition: 'opacity 0.2s ease'
+        }}>
           <DiceScene
             rollCount={rollCount}
             onResult={handleResult}
@@ -294,261 +340,246 @@ export default function GameMat({
           />
         </div>
 
-        <div style={{ position: 'relative', width: '100%', height: '76px', flexShrink: 0,
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: '10px' }}>
+        <div style={{ position: 'relative', width: '100%', height: '60px', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', paddingBottom: '16px', zIndex: 15 }}>
 
-          <AnimatePresence>
-            {isCursedSelected && targetableOtherPlayers.length > 0 && (
+          {teleporteurLabel && !result && (
+            <div style={{
+              position: 'absolute', bottom: '54px', left: 0, right: 0, display: 'flex', justifyContent: 'center', zIndex: 2
+            }}>
               <motion.div
-                initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
+                initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                 style={{
-                  position: 'absolute', bottom: '54px', left: 0, right: 0,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center',
-                  gap: '4px', zIndex: 2,
+                  background: 'rgba(124,58,237,0.2)', border: '1px solid #a78bfa55',
+                  borderRadius: '10px', padding: '4px 14px',
+                  color: '#a78bfa', fontSize: '0.72rem', fontWeight: 800,
+                  letterSpacing: '1px', textAlign: 'center',
                 }}
-              >
-                <div style={{ color: '#ff6b6b', fontSize: '0.7rem', letterSpacing: '1px', fontWeight: 800 }}>
-                  ☠️ CHOISIR UNE CIBLE
-                </div>
-                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {targetableOtherPlayers.map(p => {
-                    const idx = p.id - 1;
-                    const isTarget = curseTargetId === p.id;
-                    return (
-                      <motion.button
-                        key={p.id}
-                        whileTap={{ scale: 0.88 }}
-                        onClick={() => setCurseTargetId(prev => prev === p.id ? null : p.id)}
-                        style={{
-                          background: isTarget ? 'linear-gradient(135deg, #dc2626, #991b1b)' : 'rgba(255,255,255,0.1)',
-                          border: isTarget ? `2px solid ${PLAYER_COLORS[idx]}` : '2px solid rgba(255,255,255,0.15)',
-                          borderRadius: '10px', padding: '3px 8px',
-                          cursor: 'pointer', fontSize: '0.85rem',
-                          color: '#fff', fontWeight: 700,
-                          display: 'flex', alignItems: 'center', gap: '4px',
-                          boxShadow: isTarget ? '0 0 10px #dc262699' : 'none',
-                          transition: 'all 0.18s',
-                        }}
-                      >
-                        <span>{PLAYER_AVATARS[idx]}</span>
-                        <span style={{ fontSize: '0.72rem' }}>{p.name}</span>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <AnimatePresence>
-            {isInstantItem && needsTarget && targetableOtherPlayers.length > 0 && !result && (
-              <motion.div
-                initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
-                style={{
-                  position: 'absolute', bottom: '54px', left: 0, right: 0,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center',
-                  gap: '4px', zIndex: 2,
-                }}
-              >
-                <div style={{ color: '#f0c040', fontSize: '0.7rem', letterSpacing: '1px', fontWeight: 800 }}>🎯 CHOISIR UNE CIBLE</div>
-                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {targetableOtherPlayers.map(p => {
-                    const pc = PLAYER_COLORS[p.colorIndex ?? 0];
-                    const av = PLAYER_AVATARS[p.colorIndex ?? 0];
-                    const isTgt = itemTargetId === p.id;
-                    return (
-                      <motion.button key={p.id} whileTap={{ scale: 0.88 }}
-                        onClick={() => setItemTargetId(prev => prev === p.id ? null : p.id)}
-                        style={{
-                          background: isTgt ? `${pc}28` : 'rgba(255,255,255,0.1)',
-                          border: `2px solid ${isTgt ? pc : 'rgba(255,255,255,0.15)'}`,
-                          borderRadius: '10px', padding: '3px 8px', cursor: 'pointer',
-                          color: '#fff', fontWeight: 700, fontSize: '0.85rem',
-                          display: 'flex', alignItems: 'center', gap: '4px',
-                          boxShadow: isTgt ? `0 0 10px ${pc}99` : 'none', transition: 'all 0.18s',
-                        }}
-                      ><span>{av}</span><span style={{ fontSize: '0.72rem' }}>{p.name}</span></motion.button>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-        {teleporteurLabel && !result && (
-          <motion.div
-            initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-            style={{
-              background: 'rgba(124,58,237,0.2)', border: '1px solid #a78bfa55',
-              borderRadius: '10px', padding: '4px 14px',
-              color: '#a78bfa', fontSize: '0.72rem', fontWeight: 800,
-              letterSpacing: '1px', textAlign: 'center', zIndex: 2,
-            }}
-          >{teleporteurLabel}</motion.div>
-        )}
-
-        {result && onEndTurn ? (
-          <motion.button
-            key="end-turn"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.93 }}
-            onClick={() => onEndTurn(result?.total ?? 0)}
-            style={{
-              background: 'linear-gradient(135deg, #7c3aed, #5b21b6)',
-              border: '3px solid #a78bfa',
-              borderRadius: '30px', padding: '8px 32px',
-              color: '#fff', fontWeight: 900, fontSize: '1rem',
-              letterSpacing: '2px', cursor: 'pointer',
-              boxShadow: '0 4px 20px rgba(124,58,237,0.5)',
-              fontFamily: '"Fredoka One", "Nunito", sans-serif',
-              zIndex: 1,
-            }}
-          >✅ FIN DE TOUR</motion.button>
-        ) : isBoostItem ? (
-          <motion.button
-            whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
-            onClick={handleBoost}
-            style={{
-              background: 'linear-gradient(135deg, #22c55e, #16a34a)',
-              color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
-              padding: '8px 28px', borderRadius: '30px',
-              border: '3px solid #4ade80', cursor: 'pointer',
-              boxShadow: '0 4px 20px rgba(34,197,94,0.7)',
-              fontFamily: '"Fredoka One", "Nunito", sans-serif', zIndex: 1,
-            }}
-          >
-            🚀 ACTIVER BOOST {selectedItem?.icon}
-          </motion.button>
-        ) : isInstantItem ? (
-          !needsTarget || itemTargetId ? (
-            <motion.button
-              whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
-              onClick={handleUseInstant}
-              style={{
-                background: 'linear-gradient(135deg, #d97706, #b45309)',
-                color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
-                padding: '8px 28px', borderRadius: '30px',
-                border: '3px solid #f0c040', cursor: 'pointer',
-                boxShadow: '0 4px 20px rgba(217,119,6,0.7)',
-                fontFamily: '"Fredoka One", "Nunito", sans-serif', zIndex: 1,
-              }}
-            >
-              ✨ UTILISER {selectedItem?.icon}
-              {itemTargetId && ` → ${activePlayers.find(p => p.id === itemTargetId)?.name}`}
-            </motion.button>
-          ) : (
-            <div style={{ color: '#f0c04088', fontSize: '0.78rem', fontStyle: 'italic', paddingBottom: '4px', zIndex: 1 }}>
-              ☝️ Choisissez une cible
+              >{teleporteurLabel}</motion.div>
             </div>
-          )
-        ) : isCursedSelected ? (
-          curseTargetId ? (
+          )}
+
+          {result && onEndTurn ? (
             <motion.button
-              whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
-              onClick={handleInflict}
+              key="end-turn"
+              initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+              whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.93 }}
+              onClick={() => onEndTurn(result?.total ?? 0)}
               style={{
-                background: 'linear-gradient(135deg, #dc2626, #991b1b)',
-                color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
-                padding: '8px 28px', borderRadius: '30px',
-                border: '3px solid #ff6b6b', cursor: 'pointer',
-                boxShadow: '0 4px 20px rgba(220,38,38,0.7)',
+                background: 'linear-gradient(135deg, #7c3aed, #5b21b6)',
+                border: '3px solid #a78bfa',
+                borderRadius: '30px', padding: '8px 32px',
+                color: '#fff', fontWeight: 900, fontSize: '1rem',
+                letterSpacing: '2px', cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(124,58,237,0.5)',
                 fontFamily: '"Fredoka One", "Nunito", sans-serif',
                 zIndex: 1,
               }}
+            >✅ FIN DE TOUR</motion.button>
+          ) : isBoostItem ? (
+            <motion.button
+              whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
+              onClick={handleBoost}
+              style={{
+                background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
+                padding: '8px 28px', borderRadius: '30px',
+                border: '3px solid #4ade80', cursor: 'pointer',
+                boxShadow: '0 4px 20px rgba(34,197,94,0.7)',
+                fontFamily: '"Fredoka One", "Nunito", sans-serif', zIndex: 1,
+              }}
             >
-              ⚡ INFLIGER À {activePlayers.find(p => p.id === curseTargetId)?.name}
+              🚀 ACTIVER BOOST {selectedItem?.icon}
             </motion.button>
+          ) : isInstantItem ? (
+            !needsTarget || itemTargetId ? (
+              <motion.button
+                whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
+                onClick={handleUseInstant}
+                style={{
+                  background: 'linear-gradient(135deg, #d97706, #b45309)',
+                  color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
+                  padding: '8px 28px', borderRadius: '30px',
+                  border: '3px solid #f0c040', cursor: 'pointer',
+                  boxShadow: '0 4px 20px rgba(217,119,6,0.7)',
+                  fontFamily: '"Fredoka One", "Nunito", sans-serif', zIndex: 1,
+                }}
+              >
+                ✨ UTILISER {selectedItem?.icon}
+                {itemTargetId && ` → ${activePlayers.find(p => p.id === itemTargetId)?.name}`}
+              </motion.button>
+            ) : (
+              <div style={{ color: '#f0c04088', fontSize: '0.78rem', fontStyle: 'italic', paddingBottom: '4px', zIndex: 1 }}>
+                ☝️ Choisissez une cible
+              </div>
+            )
+          ) : isCursedSelected ? (
+            curseTargetId ? (
+              <motion.button
+                whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
+                onClick={handleInflict}
+                style={{
+                  background: 'linear-gradient(135deg, #dc2626, #991b1b)',
+                  color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
+                  padding: '8px 28px', borderRadius: '30px',
+                  border: '3px solid #ff6b6b', cursor: 'pointer',
+                  boxShadow: '0 4px 20px rgba(220,38,38,0.7)',
+                  fontFamily: '"Fredoka One", "Nunito", sans-serif',
+                  zIndex: 1,
+                }}
+              >
+                ⚡ INFLIGER À {activePlayers.find(p => p.id === curseTargetId)?.name}
+              </motion.button>
+            ) : (
+              <div style={{
+                color: '#ff6b6b88', fontSize: '0.78rem', fontStyle: 'italic',
+                paddingBottom: '4px', zIndex: 1,
+              }}>
+                ☝️ Choisissez une cible
+              </div>
+            )
           ) : (
-            <div style={{
-              color: '#ff6b6b88', fontSize: '0.78rem', fontStyle: 'italic',
-              paddingBottom: '4px', zIndex: 1,
-            }}>
-              ☝️ Choisissez une cible
-            </div>
-          )
-        ) : (
-          <motion.button
-            whileHover={rollBtnActive ? { scale: 1.08 } : {}}
-            whileTap={rollBtnActive ? { scale: 0.94 } : {}}
-            onClick={handleRoll}
-            disabled={!rollBtnActive}
-            style={{
-              background: rollBtnActive
-                ? selectedItem
-                  ? 'linear-gradient(135deg, #d97706, #b45309)'
-                  : 'linear-gradient(135deg, #e63946, #c1121f)'
-                : 'rgba(255,255,255,0.08)',
-              color: rollBtnActive ? '#fff' : '#444',
-              fontWeight: 900, fontSize: '1rem', letterSpacing: '2px',
-              padding: '8px 32px', borderRadius: '30px',
-              border: rollBtnActive
-                ? selectedItem ? '3px solid #f0c040' : '3px solid #ff6b6b'
-                : '3px solid transparent',
-              cursor: rollBtnActive ? 'pointer' : 'not-allowed',
-              boxShadow: rollBtnActive
-                ? selectedItem ? '0 4px 20px rgba(217,119,6,0.7)' : '0 4px 20px rgba(230,57,70,0.6)'
-                : 'none',
-              fontFamily: '"Fredoka One", "Nunito", sans-serif',
-              zIndex: 1, transition: 'all 0.2s',
-            }}
-          >
-            {selectedItem ? `🎲 LANCER ${selectedItem.icon}` : '🎲 LANCER'}
-          </motion.button>
-        )}
+            <motion.button
+              whileHover={rollBtnActive ? { scale: 1.08 } : {}}
+              whileTap={rollBtnActive ? { scale: 0.94 } : {}}
+              onClick={handleRoll}
+              disabled={!rollBtnActive}
+              style={{
+                background: rollBtnActive
+                  ? selectedItem
+                    ? 'linear-gradient(135deg, #d97706, #b45309)'
+                    : 'linear-gradient(135deg, #e63946, #c1121f)'
+                  : 'rgba(255,255,255,0.08)',
+                color: rollBtnActive ? '#fff' : '#444',
+                fontWeight: 900, fontSize: '1rem', letterSpacing: '2px',
+                padding: '8px 32px', borderRadius: '30px',
+                border: rollBtnActive
+                  ? selectedItem ? '3px solid #f0c040' : '3px solid #ff6b6b'
+                  : '3px solid transparent',
+                cursor: rollBtnActive ? 'pointer' : 'not-allowed',
+                boxShadow: rollBtnActive
+                  ? selectedItem ? '0 4px 20px rgba(217,119,6,0.7)' : '0 4px 20px rgba(230,57,70,0.6)'
+                  : 'none',
+                fontFamily: '"Fredoka One", "Nunito", sans-serif',
+                zIndex: 1, transition: 'all 0.2s',
+              }}
+            >
+              {selectedItem ? `🎲 LANCER ${selectedItem.icon}` : '🎲 LANCER'}
+            </motion.button>
+          )}
         </div>
       </div>
 
+      {/* 3. BARRE D'INVENTAIRE EN DESSOUS */}
+      <div style={{ position: 'absolute', bottom: '-40px', left: '50%', transform: 'translateX(-50%)', width: '460px', display: 'flex', justifyContent: 'center' }}>
+        <AnimatePresence mode="wait">
+          {activePlayer && (((activeItems.length > 0 && !usedItemThisTurn && !isRollingState) || passiveItems.length > 0)) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
+              style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', width: '100%' }}
+            >
+              {(!usedItemThisTurn && !isRollingState ? activeItems : []).map(item => {
+                const on = activeItemUid === item.uid;
+                return (
+                  <motion.button
+                    key={item.uid}
+                    whileTap={{ scale: 0.88 }}
+                    onClick={() => {
+                      if (isFinishedActive || isRollingState) return;
+                      if (usedItemThisTurn && activeItemUid !== item.uid) return;
+                      setActiveItemUid(prev => prev === item.uid ? null : item.uid);
+                      setCurseTargetId(null);
+                      setItemTargetId(null);
+                    }}
+                    title={`${item.name} — ${item.desc}`}
+                    style={{
+                      background: on ? 'linear-gradient(135deg, #f0c040, #d97706)' : 'rgba(255,255,255,0.12)',
+                      border: on ? '2px solid #f0c040' : '2px solid rgba(255,255,255,0.2)',
+                      borderRadius: '12px', padding: '6px 14px',
+                      cursor: isRollingState ? 'not-allowed' : (usedItemThisTurn && !on ? 'not-allowed' : 'pointer'), 
+                      fontSize: '1.3rem', lineHeight: 1,
+                      boxShadow: on ? '0 0 14px #f0c04099' : 'none',
+                      transition: 'all 0.18s',
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                    }}
+                  >
+                    {item.icon}
+                    {on && <span style={{ fontSize: '0.65rem', color: '#1a1a2e', fontWeight: 900 }}>ACTIF</span>}
+                  </motion.button>
+                );
+              })}
+              {passiveItems.map(item => (
+                <div key={item.uid} title={`${item.name} — ${item.desc}`} style={{
+                  background: 'rgba(34,197,94,0.12)', border: '2px solid rgba(34,197,94,0.45)',
+                  borderRadius: '12px', padding: '6px 14px', fontSize: '1.3rem', lineHeight: 1,
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                }}>
+                  {item.icon}
+                  <span style={{ fontSize: '0.58rem', color: '#4ade80', fontWeight: 900, letterSpacing: '0.5px' }}>PASSIF</span>
+                </div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* 4. BULLE DE RÉSULTAT */}
       <AnimatePresence>
         {result && (
           <motion.div
-              initial={{ scale: 0, opacity: 0, y: -6, x: '-50%' }}
-              animate={{ scale: 1, opacity: 1, y: 0, x: '-50%' }}
-              exit={{ scale: 0, opacity: 0, x: '-50%' }}
-              transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              style={{
-                position: 'absolute', top: '498px', left: '50%',
-                background: 'linear-gradient(135deg, #1a1a2e, #16213e)',
-                border: '3px solid #f0c040', borderRadius: '20px',
-                padding: '14px 36px', textAlign: 'center',
-                boxShadow: '0 0 30px rgba(240,192,64,0.4)',
-                whiteSpace: 'nowrap', zIndex: 20,
-              }}
-            >
-              {teleporteurLabel && (
-                <div style={{ color: '#a78bfa', fontSize: '0.7rem', letterSpacing: '1px', marginBottom: '6px', fontWeight: 800 }}>{teleporteurLabel}</div>
-              )}
-              <div style={{ color: '#aaa', fontSize: '1rem', letterSpacing: '3px', marginBottom: '6px' }}>RÉSULTAT</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', justifyContent: 'center' }}>
-                <span style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 700 }}>{result.die1}</span>
-                {result.die2 !== undefined && (
-                  <>
-                    <span style={{ color: '#f0c040', fontSize: '1.8rem' }}>+</span>
-                    <span style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 700 }}>{result.die2}</span>
-                  </>
-                )}
-                {result.die3 !== undefined && (
-                  <>
-                    <span style={{ color: '#f0c040', fontSize: '1.8rem' }}>+</span>
-                    <span style={{ color: '#fbbf24', fontSize: '2.2rem', fontWeight: 700 }}>{result.die3}🎲</span>
-                  </>
-                )}
-                {result.bonusLabel && (
-                  <span style={{ color: '#4ade80', fontSize: '1.8rem', fontWeight: 800 }}>
-                    {result.bonusLabel}
-                  </span>
-                )}
-                <span style={{ color: '#f0c040', fontSize: '1.8rem' }}>=</span>
-                <motion.span
-                  initial={{ scale: 0.5 }}
-                  animate={{ scale: [1.4, 1] }}
-                  transition={{ type: 'spring' }}
-                  style={{ color: '#f0c040', fontSize: '3.6rem', fontWeight: 900, textShadow: '0 0 20px #f0c040' }}
-                >{result.total}</motion.span>
+            initial={{ scale: 0, opacity: 0, y: 10, x: '-50%' }}
+            animate={{ scale: 1, opacity: 1, y: 0, x: '-50%' }}
+            exit={{ scale: 0, opacity: 0, x: '-50%' }}
+            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+            style={{
+              position: 'absolute', top: '460px', left: '50%',
+              background: 'linear-gradient(135deg, #1a1a2e, #16213e)',
+              border: '3px solid #f0c040', borderRadius: '20px',
+              padding: '12px 36px', textAlign: 'center',
+              boxShadow: '0 10px 30px rgba(240,192,64,0.4)',
+              whiteSpace: 'nowrap', zIndex: 20,
+            }}
+          >
+            {teleporteurLabel ? (
+              <div style={{ color: '#a78bfa', fontSize: '0.85rem', letterSpacing: '0.5px', marginBottom: '4px', fontWeight: 800 }}>
+                {teleporteurLabel}
               </div>
+            ) : (
+              <div style={{ color: '#aaa', fontSize: '0.85rem', letterSpacing: '3px', marginBottom: '4px' }}>RÉSULTAT</div>
+            )}
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', justifyContent: 'center' }}>
+              {!teleporteurLabel && (
+                <>
+                  <span style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 700 }}>{result.die1}</span>
+                  {result.die2 !== undefined && (
+                    <>
+                      <span style={{ color: '#f0c040', fontSize: '1.8rem' }}>+</span>
+                      <span style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 700 }}>{result.die2}</span>
+                    </>
+                  )}
+                  {result.die3 !== undefined && (
+                    <>
+                      <span style={{ color: '#f0c040', fontSize: '1.8rem' }}>+</span>
+                      <span style={{ color: '#fbbf24', fontSize: '2.2rem', fontWeight: 700 }}>{result.die3}🎲</span>
+                    </>
+                  )}
+                  {result.bonusLabel && (
+                    <span style={{ color: '#4ade80', fontSize: '1.8rem', fontWeight: 800 }}>
+                      {result.bonusLabel}
+                    </span>
+                  )}
+                  <span style={{ color: '#f0c040', fontSize: '1.8rem' }}>=</span>
+                </>
+              )}
+              
+              <motion.span
+                initial={{ scale: 0.5 }} animate={{ scale: [1.4, 1] }} transition={{ type: 'spring' }}
+                style={{ color: '#f0c040', fontSize: '3.6rem', fontWeight: 900, textShadow: '0 0 20px #f0c040' }}
+              >
+                {teleporteurLabel ? "🌀" : result.total}
+              </motion.span>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

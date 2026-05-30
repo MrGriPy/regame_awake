@@ -119,8 +119,8 @@ function MinimapOverlay({ players, onClose }) {
   }
   const SQ_LABELS = [
     { key: 'depart',    label: 'Départ / Arrivée', checkered: true  },
-    { key: 'objet',     label: 'Objet',             checkered: false },
-    { key: 'evenement', label: 'Événement',          checkered: false },
+    { key: 'objet',     label: 'Objet',              checkered: false },
+    { key: 'evenement', label: 'Événement',           checkered: false },
     { key: 'boutique',  label: 'Boutique',           checkered: false },
     { key: 'offre',     label: 'Offre Spéciale',     checkered: false },
     { key: 'neutre',    label: 'Neutre',             checkered: false },
@@ -228,7 +228,7 @@ function MinimapOverlay({ players, onClose }) {
                   )}
                   {hasPieces && (
                     <span style={{ fontSize: `${Math.floor(SQ * (pieces.length > 1 ? 0.38 : 0.48))}px`, lineHeight: 1, zIndex: 1 }}>
-                      {PLAYER_AVATARS[pieces[0].colorIndex ?? 0]}
+                      {pieces[0].avatar ?? PLAYER_AVATARS[pieces[0].colorIndex ?? 0]}
                     </span>
                   )}
                   {pieces.length > 1 && (
@@ -299,13 +299,22 @@ function App() {
 
   const handleEndTurn = useCallback((rollTotal = 0) => {
     if (!activePlayerId) return
+    
+    // 1. Calcul de la nouvelle position (bridée à 63)
     const currentTotal = Math.min((activePlayer?.diceTotal ?? 0) + rollTotal, 63)
 
-    // Find the next index of a player who hasn't finished the race.
+    // 2. Détection immédiate de l'arrivée
+    const justFinished = currentTotal >= 63 && !finishOrder.find(f => f.id === activePlayerId)
+    let newFinishOrder = finishOrder
+    if (justFinished) {
+      newFinishOrder = [...finishOrder, { id: activePlayerId, round: roundCount }]
+    }
+
+    // 3. Logique de recherche du PROCHAIN joueur valide
     const n = orderedIds.length
     const startCandidate = (turnIndex + 1) % n
 
-    const isFinishedId = (id) => finishOrder.find(f => f.id === id)
+    const isFinishedId = (id) => newFinishOrder.some(f => f.id === id)
 
     const findNextAvailableIndex = (fromIdx) => {
       let i = fromIdx
@@ -320,8 +329,10 @@ function App() {
     const nextIdx = startCandidate
     const nextPlayer = players.find(p => p.id === orderedIds[nextIdx])
     const nextSkips = nextPlayer?.skipNextTurn ?? false
-    // If next player is skipped, begin search after them
-    const actualNextIdx = nextSkips ? findNextAvailableIndex((nextIdx + 1) % n) : findNextAvailableIndex(nextIdx)
+    
+    const actualNextIdx = nextSkips 
+      ? findNextAvailableIndex((nextIdx + 1) % n) 
+      : findNextAvailableIndex(nextIdx)
 
     setPlayers(ps => ps.map(p => {
       if (p.id === activePlayerId) {
@@ -332,14 +343,9 @@ function App() {
       return p
     }))
 
-    const justFinished = currentTotal >= 63 && !finishOrder.find(f => f.id === activePlayerId)
-    let newFinishOrder = finishOrder
-    if (justFinished) newFinishOrder = [...finishOrder, { id: activePlayerId, round: roundCount }]
-
-    const isLastFinisher = newFinishOrder.length >= orderedIds.length - 1
+    const isGameOverCondition = newFinishOrder.length >= orderedIds.length - 1
 
     const doAdvance = () => {
-      // If we looped back to player 0, start a new round
       if (actualNextIdx === 0) {
         setRoundCount(r => r + 1)
         setShopDiscountRounds(r => Math.max(0, r - 1))
@@ -348,12 +354,13 @@ function App() {
       setSquareMode(null)
     }
 
-    if (isLastFinisher) {
-      const remainingId = orderedIds.find(id => !newFinishOrder.find(f => f.id === id)) ?? null
+    if (isGameOverCondition) {
+      const remainingId = orderedIds.find(id => !newFinishOrder.some(f => f.id === id)) ?? null
       const finalOrder = remainingId
         ? [...newFinishOrder, { id: remainingId, round: Infinity }]
         : newFinishOrder
       setFinishOrder(finalOrder)
+      
       if (justFinished) {
         setFinishEvent({ player: activePlayer, position: newFinishOrder.length, isGameOver: true })
         pendingFinishRef.current = () => setGamePhase('gameover')
@@ -390,8 +397,14 @@ function App() {
   const handleSquareDone = useCallback(() => {
     const fn = pendingSquareRef.current
     pendingSquareRef.current = null
+    
+    if (activePlayer && (activePlayer.diceTotal ?? 0) >= 63) {
+      setSquareMode(null)
+      return
+    }
+    
     fn?.()
-  }, [])
+  }, [activePlayer])
 
   const addItemToPlayer = useCallback((playerId, newItem) => {
     const player = players.find(p => p.id === playerId)
@@ -408,7 +421,6 @@ function App() {
     setPlayers(ps => {
       const updatedPlayers = ps.map(p => p.id === playerId ? { ...p, money: p.money - amount } : p)
       
-      // Give +2€ to each player with a contract when another player spends money
       if (amount > 0) {
         return updatedPlayers.map(p => {
           if (p.id !== playerId) {
@@ -426,9 +438,40 @@ function App() {
   }, [])
 
   const modifyPosition = useCallback((playerId, delta) => {
-    setPlayers(ps => ps.map(p => p.id === playerId
-      ? { ...p, diceTotal: Math.max(0, (p.diceTotal ?? 0) + delta) } : p))
-  }, [])
+    setPlayers(ps => ps.map(p => {
+      if (p.id !== playerId) return p
+      
+      const currentTotal = p.diceTotal ?? 0
+      const newTotal = Math.max(0, Math.min(63, currentTotal + delta))
+      
+      if (newTotal >= 63 && currentTotal < 63) {
+        setFinishOrder(prev => {
+          if (prev.some(f => f.id === playerId)) return prev
+          const updated = [...prev, { id: playerId, round: roundCount }]
+          
+          const targetPlayer = ps.find(pl => pl.id === playerId)
+          const isGameOverCondition = updated.length >= orderedIds.length - 1
+          
+          setFinishEvent({ 
+            player: targetPlayer, 
+            position: updated.length, 
+            isGameOver: isGameOverCondition 
+          })
+          
+          if (isGameOverCondition) {
+            pendingFinishRef.current = () => setGamePhase('gameover')
+          } else {
+            pendingFinishRef.current = () => {
+              setSquareMode(null)
+            }
+          }
+          return updated
+        })
+      }
+      
+      return { ...p, diceTotal: newTotal }
+    }))
+  }, [roundCount, orderedIds.length]) 
 
   const skipTurnForPlayer = useCallback((playerId) => {
     setPlayers(ps => ps.map(p => p.id === playerId ? { ...p, skipNextTurn: true } : p))
@@ -490,8 +533,6 @@ function App() {
   const [debugOpen, setDebugOpen] = useState(false)
   const [minimapOpen, setMinimapOpen] = useState(false)
 
-  // Apply a shop-wide discount for `turns` rounds.
-  // If a discount is already active, do not re-apply or extend it.
   const applyShopDiscount = useCallback((turns) => {
     setShopDiscountRounds(prev => prev > 0 ? prev : turns)
   }, [])
@@ -555,7 +596,7 @@ function App() {
         transition: 'opacity 0.4s',
       }}>
         <div style={{
-          position: 'absolute', bottom: '72px', left: '50%',
+          position: 'absolute', bottom: '57px', left: '50%',
           transform: 'translateX(-50%)',
           background: 'rgba(10,8,30,0.7)', border: '1px solid rgba(240,192,64,0.25)',
           borderRadius: '20px', padding: '4px 16px',
@@ -713,7 +754,7 @@ function App() {
                 const p = players.find(pl => pl.id === id)
                 if (!p) return null
                 const pc = PLAYER_COLORS[p.colorIndex ?? 0]
-                const av = PLAYER_AVATARS[p.colorIndex ?? 0]
+                const av = p.avatar ?? PLAYER_AVATARS[p.colorIndex ?? 0]
                 const isActive = p.id === activePlayerId
                 return (
                   <div key={p.id} style={{
@@ -840,7 +881,7 @@ function App() {
 function FinishOverlay({ event, onContinue }) {
   const { player, position, isGameOver } = event
   const color = PLAYER_COLORS[player.colorIndex ?? 0]
-  const avatar = PLAYER_AVATARS[player.colorIndex ?? 0]
+  const avatar = player.avatar ?? PLAYER_AVATARS[player.colorIndex ?? 0]
   const medals = ['🥇', '🥈', '🥉', '🏅', '🏅']
   const medal = medals[Math.min(position - 1, 4)]
   const ordinal = position === 1 ? '1ère' : `${position}ème`
@@ -925,7 +966,8 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
   const [, setEventReveal] = useState(false)
   const stripRef = useRef(null)
   const eventRevealTimerRef = useRef(null)
-  const SLOT_REPS = 12, ITEM_W = 86, SLOT_GAP = 10, SLOT_STEP = 96
+  
+  const SLOT_REPS = 12, ITEM_W = 120, SLOT_GAP = 14, SLOT_STEP = 134
   const SLOT_VISIBLE = 5, SLOT_W = SLOT_VISIBLE * SLOT_STEP - SLOT_GAP
   const INITIAL_IDX = 2
 
@@ -996,11 +1038,11 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
 
   const contBtn = onDone ? (
     <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.35 }}
-      whileHover={{ scale: 1.07 }} whileTap={{ scale: 0.93 }} onClick={onDone}
+      whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={onDone}
       style={{
         background: 'linear-gradient(135deg,#7c3aed,#5b21b6)', border: '2px solid #a78bfa',
-        borderRadius: '22px', padding: '9px 28px', color: '#fff', fontWeight: 900,
-        fontSize: '0.9rem', cursor: 'pointer', letterSpacing: '1.5px',
+        borderRadius: '24px', padding: '10px 32px', color: '#fff', fontWeight: 900,
+        fontSize: '1.1rem', cursor: 'pointer', letterSpacing: '1.5px',
         boxShadow: '0 4px 14px rgba(124,58,237,0.5)', flexShrink: 0,
       }}
     >▶ CONTINUER</motion.button>
@@ -1076,23 +1118,23 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
 
   const rollBtn = !dieFinal && (
     <motion.button
-      whileHover={!dieRolling ? { scale: 1.07 } : {}}
-      whileTap={!dieRolling ? { scale: 0.93 } : {}}
+      whileHover={!dieRolling ? { scale: 1.05 } : {}}
+      whileTap={!dieRolling ? { scale: 0.95 } : {}}
       onClick={rollDie} disabled={dieRolling}
       style={{
         background: dieRolling ? 'rgba(255,255,255,0.06)' : `linear-gradient(135deg, ${drawn?.color ?? '#888'}, ${drawn?.color ?? '#888'}cc)`,
         border: `2px solid ${drawn?.color ?? '#888'}`,
-        borderRadius: '24px', padding: '8px 22px',
+        borderRadius: '24px', padding: '10px 24px',
         color: dieRolling ? '#555' : '#fff',
-        fontWeight: 900, fontSize: '0.88rem', cursor: dieRolling ? 'not-allowed' : 'pointer', flexShrink: 0,
+        fontWeight: 900, fontSize: '1.05rem', cursor: dieRolling ? 'not-allowed' : 'pointer', flexShrink: 0,
       }}
     >🎲 Lancer le dé</motion.button>
   )
 
   const targetPicker = (label) => (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', width: '100%' }}>
-      <div style={{ color: '#aaa', fontSize: '0.72rem', letterSpacing: '1.5px', fontWeight: 700 }}>{label}</div>
-      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
+      <div style={{ color: '#aaa', fontSize: '0.95rem', letterSpacing: '1.5px', fontWeight: 700 }}>{label}</div>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
         {targetableOtherPlayers.length > 0 ? targetableOtherPlayers.map(p => {
           const pc = PLAYER_COLORS[p.colorIndex ?? 0]; const sel = targetId === p.id
           return (
@@ -1101,24 +1143,24 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
               style={{
                 background: sel ? `${pc}28` : 'rgba(255,255,255,0.07)',
                 border: `2px solid ${sel ? pc : 'rgba(255,255,255,0.15)'}`,
-                borderRadius: '9px', padding: '4px 10px', color: '#fff', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: '4px',
+                borderRadius: '12px', padding: '8px 16px', color: '#fff', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '6px',
                 boxShadow: sel ? `0 0 8px ${pc}55` : 'none',
-                transition: 'all 0.15s', fontSize: '0.82rem', fontWeight: 700,
+                transition: 'all 0.15s', fontSize: '1rem', fontWeight: 700,
               }}
             >
-              <span>{PLAYER_AVATARS[p.colorIndex ?? 0]}</span>
+              <span>{p.avatar ?? PLAYER_AVATARS[p.colorIndex ?? 0]}</span>
               <span style={{ color: sel ? pc : '#fff' }}>{p.name}</span>
             </motion.button>
           )
         }) : (
-          <div style={{ color: '#aaa', fontSize: '0.75rem', textAlign: 'center', padding: '6px 10px' }}>Aucune cible disponible — tous sont arrivés.</div>
+          <div style={{ color: '#aaa', fontSize: '0.95rem', textAlign: 'center', padding: '6px 10px' }}>Aucune cible disponible.</div>
         )}
       </div>
     </div>
   )
 
-  const PW = 248, PH = 350
+  const PW = 320, PH = 520 
 
   const playerBadge = (subtitle) => (
     <motion.div
@@ -1126,20 +1168,20 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
       style={{
         background: 'rgba(26,26,46,0.85)',
         border: `2px solid ${activePlayer ? color + '66' : 'rgba(255,255,255,0.1)'}`,
-        borderRadius: '12px', padding: '7px 18px', backdropFilter: 'blur(10px)',
-        display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0,
+        borderRadius: '14px', padding: '10px 22px', backdropFilter: 'blur(10px)',
+        display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0,
       }}
     >
       {activePlayer ? (
         <>
-          <span style={{ fontSize: '1.6rem', filter: `drop-shadow(0 0 6px ${color})` }}>
-            {PLAYER_AVATARS[activePlayer.colorIndex ?? 0]}
+          <span style={{ fontSize: '2rem', filter: `drop-shadow(0 0 6px ${color})` }}>
+            {activePlayer.avatar ?? PLAYER_AVATARS[activePlayer.colorIndex ?? 0]}
           </span>
-          <span style={{ color, fontWeight: 900, fontSize: '1.05rem' }}>{activePlayer.name}</span>
-          <span style={{ color: '#aaa', fontSize: '0.82rem' }}>{subtitle}</span>
+          <span style={{ color, fontWeight: 900, fontSize: '1.25rem' }}>{activePlayer.name}</span>
+          <span style={{ color: '#ccc', fontSize: '0.95rem' }}>{subtitle}</span>
         </>
       ) : (
-        <span style={{ color: '#555', fontStyle: 'italic', fontSize: '0.88rem' }}>
+        <span style={{ color: '#555', fontStyle: 'italic', fontSize: '1rem' }}>
           🔒 Réservé au joueur actif sur une case Offre Spéciale
         </span>
       )}
@@ -1149,12 +1191,12 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
   if (mode === 'evenement') return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', gap: '20px', padding: '20px',
+      alignItems: 'center', justifyContent: 'center', gap: '24px', padding: '20px 20px 60px 20px', overflowY: 'auto',
     }}>
       <motion.h2 initial={{ y: -16, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
         style={{
-          fontFamily: '"Fredoka One", sans-serif', fontSize: '2.2rem', margin: 0,
-          color: '#f0c040', letterSpacing: '3px',
+          fontFamily: '"Fredoka One", sans-serif', fontSize: '2.6rem', margin: 0,
+          color: '#f0c040', letterSpacing: '3px', flexShrink: 0,
         }}
       >🎴 ÉVÉNEMENT</motion.h2>
       {playerBadge('tombe sur un événement')}
@@ -1162,8 +1204,8 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
         initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.15 }}
         style={{
           background: 'rgba(26,26,46,0.95)', border: '2px solid rgba(240,192,64,0.2)',
-          borderRadius: '22px', padding: '20px 26px', width: '100%', maxWidth: '420px',
-          textAlign: 'center', boxShadow: '0 18px 40px rgba(0,0,0,0.35)',
+          borderRadius: '22px', padding: '24px 32px', width: '100%', maxWidth: '520px',
+          textAlign: 'center', boxShadow: '0 18px 40px rgba(0,0,0,0.35)', flexShrink: 0,
         }}
       >
         {!drawn ? (
@@ -1171,11 +1213,11 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
             initial={{ y: -10, opacity: 0.75 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.8, repeat: Infinity, repeatType: 'reverse' }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}
           >
-            <div style={{ fontSize: '3rem' }}>🔮</div>
-            <div style={{ color: '#f8fafc', fontWeight: 800, fontSize: '1.05rem' }}>Tirage en cours...</div>
-            <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>L'événement va se révéler sous peu</div>
+            <div style={{ fontSize: '3.5rem' }}>🔮</div>
+            <div style={{ color: '#f8fafc', fontWeight: 800, fontSize: '1.2rem' }}>Tirage en cours...</div>
+            <div style={{ color: '#94a3b8', fontSize: '0.95rem' }}>L'événement va se révéler sous peu</div>
           </motion.div>
         ) : (
           <>
@@ -1185,17 +1227,17 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
               transition={{ duration: 0.32 }}
               style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '10px' }}>{drawn.icon}</div>
-              <div style={{ color: drawn.color, fontWeight: 900, fontSize: '1.1rem', marginBottom: '10px' }}>{drawn.name}</div>
+              <div style={{ fontSize: '3.5rem', marginBottom: '12px' }}>{drawn.icon}</div>
+              <div style={{ color: drawn.color, fontWeight: 900, fontSize: '1.4rem', marginBottom: '12px' }}>{drawn.name}</div>
             </motion.div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
               {drawn.lines.map((line, i) => (
                 <div key={i} style={{
-                  background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '10px 12px',
-                  color: '#e5e7eb', fontSize: '0.88rem', lineHeight: 1.4,
+                  background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px 16px',
+                  color: '#e5e7eb', fontSize: '1.1rem', lineHeight: 1.4,
                 }}>
                   <div style={{ fontWeight: 800 }}>{line.label}</div>
-                  {line.sub && <div style={{ color: '#9ca3af', fontSize: '0.78rem', marginTop: '4px' }}>{line.sub}</div>}
+                  {line.sub && <div style={{ color: '#9ca3af', fontSize: '0.95rem', marginTop: '6px' }}>{line.sub}</div>}
                 </div>
               ))}
             </div>
@@ -1205,22 +1247,22 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
 
       {applied ? (
         <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-          <div style={{ fontSize: '3rem' }}>✅</div>
-          <div style={{ color: '#4ade80', fontWeight: 800, fontSize: '0.92rem', textAlign: 'center' }}>Effet appliqué !</div>
+          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
+          <div style={{ fontSize: '3.5rem' }}>✅</div>
+          <div style={{ color: '#4ade80', fontWeight: 800, fontSize: '1.2rem', textAlign: 'center' }}>Effet appliqué !</div>
           {contBtn}
         </motion.div>
       ) : (
-        <motion.button whileHover={drawn ? { scale: 1.06 } : {}}
-          whileTap={drawn ? { scale: 0.94 } : {}}
+        <motion.button whileHover={drawn ? { scale: 1.04 } : {}}
+          whileTap={drawn ? { scale: 0.96 } : {}}
           onClick={handleApply}
           disabled={!canApply}
           style={{
             background: drawn ? 'linear-gradient(135deg, #f0c040, #d97706)' : 'rgba(255,255,255,0.07)',
-            border: '2px solid rgba(240,192,64,0.35)', borderRadius: '26px', padding: '12px 36px',
-            color: drawn ? '#1a1a2e' : '#777', fontWeight: 900, fontSize: '0.95rem', cursor: drawn ? 'pointer' : 'not-allowed',
+            border: '2px solid rgba(240,192,64,0.35)', borderRadius: '26px', padding: '14px 44px',
+            color: drawn ? '#1a1a2e' : '#777', fontWeight: 900, fontSize: '1.1rem', cursor: drawn ? 'pointer' : 'not-allowed',
             letterSpacing: '1.5px', boxShadow: drawn ? '0 8px 26px rgba(240,192,64,0.35)' : 'none',
-            opacity: drawn ? 1 : 0.6,
+            opacity: drawn ? 1 : 0.6, flexShrink: 0,
           }}
         >⚡ APPLIQUER L'ÉVÉNEMENT</motion.button>
       )}
@@ -1230,15 +1272,16 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
   if (mode === null) return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', gap: '18px', padding: '16px 24px',
+      alignItems: 'center', justifyContent: 'center', gap: '24px', padding: '32px 24px 60px 24px', overflowY: 'auto',
     }}>
       <motion.h2 initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
         style={{
-          fontFamily: '"Fredoka One", sans-serif', fontSize: '2rem', margin: 0,
-          color: '#c084fc', letterSpacing: '3px',
-        }}>🎴 ÉVÉNEMENT</motion.h2>
+          fontFamily: '"Fredoka One", sans-serif', fontSize: '2.8rem', margin: 0,
+          color: '#c084fc', letterSpacing: '3px', flexShrink: 0,
+        }}
+      >🎴 ÉVÉNEMENT</motion.h2>
       {playerBadge('choisit son événement')}
-      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', justifyContent: 'center' }}>
+      <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', justifyContent: 'center', flexShrink: 0 }}>
         {[
           { key: 'roulette', icon: '🎰', label: 'CASE OBJET', desc: 'Obtient un objet aléatoire de la boutique', grad: 'linear-gradient(135deg,#d97706,#b45309)', border: '#f0c040' },
           { key: 'offre',    icon: '🎴', label: 'OFFRE SPÉCIALE', desc: 'Tire une carte d\'événement spécial', grad: 'linear-gradient(135deg,#7c3aed,#a855f7)', border: '#a855f7' },
@@ -1250,15 +1293,15 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
             onClick={() => activePlayer && setMode(opt.key)}
             style={{
               background: opt.grad, border: `3px solid ${opt.border}`,
-              borderRadius: '22px', padding: '22px 28px', width: '200px',
+              borderRadius: '24px', padding: '24px 28px', width: '260px',
               cursor: activePlayer ? 'pointer' : 'not-allowed',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px',
-              boxShadow: `0 6px 28px ${opt.border}44`,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px',
+              boxShadow: `0 8px 32px ${opt.border}44`,
             }}
           >
-            <span style={{ fontSize: '3rem' }}>{opt.icon}</span>
-            <span style={{ color: '#fff', fontFamily: '"Fredoka One", sans-serif', fontSize: '1rem', letterSpacing: '1.5px' }}>{opt.label}</span>
-            <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.72rem', textAlign: 'center', lineHeight: 1.4 }}>{opt.desc}</span>
+            <span style={{ fontSize: '3.8rem' }}>{opt.icon}</span>
+            <span style={{ color: '#fff', fontFamily: '"Fredoka One", sans-serif', fontSize: '1.3rem', letterSpacing: '1.5px' }}>{opt.label}</span>
+            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', textAlign: 'center', lineHeight: 1.4 }}>{opt.desc}</span>
           </motion.button>
         ))}
       </div>
@@ -1266,8 +1309,8 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
         <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }} onClick={onDone}
           style={{
             background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: '30px', padding: '8px 24px', color: '#666',
-            fontSize: '0.82rem', cursor: 'pointer', letterSpacing: '1.5px',
+            borderRadius: '40px', padding: '12px 44px', color: '#666',
+            fontSize: '1.1rem', cursor: 'pointer', letterSpacing: '1.5px', flexShrink: 0,
           }}
         >⏭ Passer</motion.button>
       )}
@@ -1277,23 +1320,23 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
   if (mode === 'roulette') return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '12px 20px',
+      alignItems: 'center', justifyContent: 'center', gap: '24px', padding: '24px 20px 60px 20px', overflowY: 'auto',
     }}>
       <motion.h2
           initial={{ opacity: 0 }} animate={{ opacity: 1 }}
           style={{
-            fontFamily: '"Fredoka One", sans-serif', fontSize: '1.7rem', margin: 0,
-            color: '#f0c040', letterSpacing: '2px',
+            fontFamily: '"Fredoka One", sans-serif', fontSize: '2.6rem', margin: 0,
+            color: '#f0c040', letterSpacing: '2px', flexShrink: 0,
           }}>🎰 CASE OBJET</motion.h2>
       {playerBadge('lance la roulette')}
 
       {spinPhase === 'claimed' ? (
         <motion.div initial={{ scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
-          <div style={{ fontSize: '5rem' }}>{winner?.icon}</div>
-          <div style={{ color: '#4ade80', fontFamily: '"Fredoka One", sans-serif', fontSize: '1.4rem', letterSpacing: '2px' }}>✅ {winner?.name} obtenu !</div>
+          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', flexShrink: 0 }}>
+          <div style={{ fontSize: '6rem' }}>{winner?.icon}</div>
+          <div style={{ color: '#4ade80', fontFamily: '"Fredoka One", sans-serif', fontSize: '1.8rem', letterSpacing: '2px' }}>✅ {winner?.name} obtenu !</div>
           {winner?.desc && (
-            <div style={{ color: '#d1fae5', fontSize: '0.9rem', fontWeight: 700, textAlign: 'center', maxWidth: '280px' }}>
+            <div style={{ color: '#d1fae5', fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', maxWidth: '400px', lineHeight: 1.4 }}>
               {winner.desc}
             </div>
           )}
@@ -1301,17 +1344,17 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
         </motion.div>
       ) : (
         <>
-          <div style={{ position: 'relative', width: `${SLOT_W}px`, height: '120px', flexShrink: 0 }}>
+          <div style={{ position: 'relative', width: `${SLOT_W}px`, height: '150px', flexShrink: 0 }}>
             <div style={{
               position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', borderRadius: '16px',
               background: 'linear-gradient(to right, rgba(8,6,24,1) 0%, transparent 22%, transparent 78%, rgba(8,6,24,1) 100%)',
             }} />
             <div style={{
               position: 'absolute', top: '4px', bottom: '4px', left: '50%', zIndex: 3,
-              width: `${ITEM_W + 14}px`, transform: 'translateX(-50%)',
-              border: `2px solid ${spinPhase === 'won' ? '#f0c040' : 'rgba(240,192,64,0.45)'}`,
-              borderRadius: '14px', pointerEvents: 'none',
-              boxShadow: spinPhase === 'won' ? '0 0 22px #f0c04077' : 'none',
+              width: `${ITEM_W + 18}px`, transform: 'translateX(-50%)',
+              border: `3px solid ${spinPhase === 'won' ? '#f0c040' : 'rgba(240,192,64,0.45)'}`,
+              borderRadius: '16px', pointerEvents: 'none',
+              boxShadow: spinPhase === 'won' ? '0 0 24px #f0c04099' : 'none',
               transition: 'border-color 0.5s, box-shadow 0.5s',
             }} />
             <div style={{ overflow: 'hidden', width: '100%', height: '100%' }}>
@@ -1322,14 +1365,14 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
               }}>
                 {stripItems.map((item, r) => (
                   <div key={r} style={{
-                    width: `${ITEM_W}px`, flexShrink: 0, height: '108px',
-                    background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '12px', padding: '8px 6px',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                    width: `${ITEM_W}px`, flexShrink: 0, height: '130px',
+                    background: 'rgba(255,255,255,0.07)', border: '2px solid rgba(255,255,255,0.1)',
+                    borderRadius: '16px', padding: '12px 10px',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px',
                   }}>
-                    <div style={{ fontSize: '2.2rem', lineHeight: 1 }}>{item.icon}</div>
-                    <div style={{ color: '#bbb', fontSize: '0.57rem', textAlign: 'center', lineHeight: 1.2 }}>{item.name}</div>
-                    {item.special && <div style={{ color: '#a855f7', fontSize: '0.48rem', fontWeight: 800, letterSpacing: '0.5px' }}>SPÉCIAL</div>}
+                    <div style={{ fontSize: '3rem', lineHeight: 1 }}>{item.icon}</div>
+                    <div style={{ color: '#fff', fontSize: '0.95rem', textAlign: 'center', lineHeight: 1.2, fontWeight: 800 }}>{item.name}</div>
+                    {item.special && <div style={{ color: '#a855f7', fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.5px' }}>SPÉCIAL</div>}
                   </div>
                 ))}
               </div>
@@ -1338,10 +1381,10 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
 
           {spinPhase === 'won' && winner && (
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-              style={{ color: '#f0c040', fontWeight: 800, fontSize: '0.95rem', textAlign: 'center' }}>
-              🎉 <span style={{ color: '#fff' }}>{winner.name}</span> {winner.icon}
+              style={{ color: '#f0c040', fontWeight: 800, fontSize: '1.2rem', textAlign: 'center', flexShrink: 0 }}>
+              🎉 <span style={{ color: '#fff', fontSize: '1.3rem' }}>{winner.name}</span> {winner.icon}
               {winner.desc && (
-                <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '0.78rem', marginTop: '6px' }}>
+                <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '1rem', marginTop: '8px', maxWidth: '440px', lineHeight: 1.4 }}>
                   {winner.desc}
                 </div>
               )}
@@ -1349,19 +1392,20 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
           )}
 
           <motion.button
-            whileHover={spinPhase === 'idle' && activePlayer ? { scale: 1.07 } : {}}
-            whileTap={spinPhase === 'idle' && activePlayer ? { scale: 0.93 } : {}}
+            whileHover={spinPhase === 'idle' && activePlayer ? { scale: 1.05 } : {}}
+            whileTap={spinPhase === 'idle' && activePlayer ? { scale: 0.95 } : {}}
             onClick={spinPhase === 'idle' ? startSpin : spinPhase === 'won' ? claimRoulette : undefined}
             style={{
               background: spinPhase === 'spinning' ? 'rgba(255,255,255,0.06)'
                 : spinPhase === 'won' ? 'linear-gradient(135deg,#22c55e,#16a34a)'
                 : 'linear-gradient(135deg,#d97706,#b45309)',
               border: `3px solid ${spinPhase === 'won' ? '#22c55e' : spinPhase === 'spinning' ? 'rgba(255,255,255,0.1)' : '#f0c040'}`,
-              borderRadius: '32px', padding: '10px 40px',
+              borderRadius: '32px', padding: '14px 52px',
               color: spinPhase === 'spinning' ? '#555' : '#fff',
-              fontFamily: '"Fredoka One", sans-serif', fontSize: '1rem', letterSpacing: '2px',
+              fontFamily: '"Fredoka One", sans-serif', fontSize: '1.2rem', letterSpacing: '2px',
               cursor: spinPhase === 'spinning' ? 'not-allowed' : 'pointer',
               boxShadow: spinPhase === 'won' ? '0 4px 20px rgba(34,197,94,0.5)' : spinPhase === 'idle' ? '0 4px 22px rgba(240,192,64,0.45)' : 'none',
+              flexShrink: 0,
             }}
           >
             {spinPhase === 'idle' ? '🎰 LANCER' : spinPhase === 'spinning' ? '⏳ EN COURS...' : '✅ RÉCLAMER'}
@@ -1376,18 +1420,18 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
       width: '100%', height: '100%',
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      gap: '10px', padding: '10px 20px',
+      gap: '20px', padding: '16px 20px 80px 20px', overflowY: 'auto',
     }}>
       <motion.h2
           initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
           style={{
-            fontFamily: '"Fredoka One", sans-serif', fontSize: '2.1rem', margin: 0,
+            fontFamily: '"Fredoka One", sans-serif', fontSize: '2.8rem', margin: 0,
             color: '#c084fc', letterSpacing: '3px', flexShrink: 0,
           }}
         >{mode === 'evenement' ? '🎴 ÉVÉNEMENT' : '🎴 OFFRE SPÉCIALE'}</motion.h2>
       {playerBadge(mode === 'evenement' ? 'tombe sur un événement' : 'tire une carte')}
 
-      <div style={{ display: 'flex', gap: '18px', alignItems: 'stretch', justifyContent: 'center', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: '24px', alignItems: 'stretch', justifyContent: 'center', flexShrink: 0 }}>
         <div style={{ width: `${PW}px`, height: `${PH}px`, position: 'relative', flexShrink: 0 }}>
           <AnimatePresence mode="wait">
             {!drawn && !flipping && (
@@ -1397,22 +1441,22 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
                 style={{
                   position: 'absolute', inset: 0,
                   background: 'linear-gradient(135deg, #1a0533, #2d0a5e)',
-                  border: '3px solid rgba(168,85,247,0.5)', borderRadius: '20px',
+                  border: '3px solid rgba(168,85,247,0.5)', borderRadius: '24px',
                   backdropFilter: 'blur(14px)',
                   display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', gap: '10px',
-                  boxShadow: '0 0 26px rgba(168,85,247,0.2)',
+                  alignItems: 'center', justifyContent: 'center', gap: '14px',
+                  boxShadow: '0 0 24px rgba(168,85,247,0.2)',
                 }}
               >
-                <div style={{ fontSize: '3.5rem', opacity: 0.55 }}>🎴</div>
-                <div style={{ color: 'rgba(168,85,247,0.55)', fontSize: '0.76rem', letterSpacing: '2px' }}>CARTE CACHÉE</div>
+                <div style={{ fontSize: '4.5rem', opacity: 0.55 }}>🎴</div>
+                <div style={{ color: 'rgba(168,85,247,0.65)', fontSize: '1rem', letterSpacing: '2px', fontWeight: 800 }}>CARTE CACHÉE</div>
               </motion.div>
             )}
             {flipping && (
               <motion.div key="flip"
-                style={{ position: 'absolute', inset: 0, background: 'rgba(26,26,46,0.5)', borderRadius: '20px',
+                style={{ position: 'absolute', inset: 0, background: 'rgba(26,26,46,0.5)', borderRadius: '24px',
                   display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              ><div style={{ color: '#a855f7', letterSpacing: '2px' }}>...</div></motion.div>
+              ><div style={{ color: '#a855f7', fontSize: '1.8rem', letterSpacing: '2px' }}>...</div></motion.div>
             )}
             {drawn && !flipping && (
               <motion.div key={drawn.id}
@@ -1422,23 +1466,24 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
                 style={{
                   position: 'absolute', inset: 0,
                   background: 'linear-gradient(135deg, rgba(26,26,46,0.97), rgba(22,33,62,0.97))',
-                  border: `3px solid ${drawn.color}`, borderRadius: '20px', padding: '18px 16px',
+                  border: `3px solid ${drawn.color}`, borderRadius: '24px', padding: '20px 16px',
                   backdropFilter: 'blur(14px)', textAlign: 'center',
-                  boxShadow: `0 0 32px ${drawn.color}44`,
+                  boxShadow: `0 0 28px ${drawn.color}44`,
                   display: 'flex', flexDirection: 'column', alignItems: 'center', overflow: 'hidden',
                 }}
               >
-                <div style={{ fontSize: '2.8rem', marginBottom: '6px', flexShrink: 0 }}>{drawn.icon}</div>
-                <div style={{ color: drawn.color, fontWeight: 900, fontSize: '1.08rem', marginBottom: '10px', flexShrink: 0 }}>{drawn.name}</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', width: '100%' }}>
+                <div style={{ fontSize: '4rem', marginBottom: '10px', flexShrink: 0 }}>{drawn.icon}</div>
+                <div style={{ color: drawn.color, fontWeight: 900, fontSize: '1.35rem', marginBottom: '14px', flexShrink: 0 }}>{drawn.name}</div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
                   {drawn.lines.map((line, i) => (
                     <div key={i} style={{
-                      background: 'rgba(255,255,255,0.06)', borderRadius: '8px', padding: '5px 8px',
-                      display: 'flex', justifyContent: line.sub ? 'space-between' : 'center',
-                      alignItems: 'center', gap: '5px',
+                      background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '10px 14px',
+                      display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                      alignItems: 'center', gap: '4px', flexShrink: 0,
                     }}>
-                      <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.78rem' }}>{line.label}</span>
-                      {line.sub && <span style={{ color: '#aaa', fontSize: '0.7rem' }}>{line.sub}</span>}
+                      <span style={{ color: '#fff', fontWeight: 700, fontSize: '1.02rem', lineHeight: 1.35 }}>{line.label}</span>
+                      {line.sub && <span style={{ color: '#bbb', fontSize: '0.85rem', fontWeight: 600 }}>{line.sub}</span>}
                     </div>
                   ))}
                 </div>
@@ -1451,54 +1496,54 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
           style={{
             width: `${PW}px`, height: `${PH}px`,
             background: 'rgba(22,22,44,0.92)',
-            border: `2px solid ${drawn && !flipping ? (applied ? '#22c55e' : drawn.color + '50') : 'rgba(255,255,255,0.08)'}`,
-            borderRadius: '20px', padding: '12px',
+            border: `3px solid ${drawn && !flipping ? (applied ? '#22c55e' : drawn.color + '50') : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: '24px', padding: '16px',
             backdropFilter: 'blur(10px)',
             display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: '8px',
+            alignItems: 'center', justifyContent: 'center', gap: '12px',
             boxShadow: applied ? '0 0 18px rgba(34,197,94,0.25)' : 'none',
             transition: 'border-color 0.3s, box-shadow 0.3s',
             overflow: 'hidden', flexShrink: 0,
           }}
         >
           {!drawn || flipping ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', opacity: 0.28 }}>
-              <div style={{ fontSize: '2.5rem' }}>🎴</div>
-              <div style={{ color: '#aaa', fontSize: '0.76rem', letterSpacing: '1px', textAlign: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', opacity: 0.3 }}>
+              <div style={{ fontSize: '3.5rem' }}>🎴</div>
+              <div style={{ color: '#ccc', fontSize: '1.05rem', letterSpacing: '1px', textAlign: 'center', fontWeight: 700, lineHeight: 1.4 }}>
                 Tirez une carte<br/>pour voir l'effet
               </div>
             </div>
           ) : applied ? (
             <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}
             >
-              <div style={{ fontSize: '3rem' }}>✅</div>
-              <div style={{ color: '#4ade80', fontWeight: 800, fontSize: '0.92rem', textAlign: 'center' }}>Effet appliqué !</div>
+              <div style={{ fontSize: '4rem' }}>✅</div>
+              <div style={{ color: '#4ade80', fontWeight: 800, fontSize: '1.2rem', textAlign: 'center' }}>Effet appliqué !</div>
               {contBtn}
             </motion.div>
           ) : (
             <>
               {(drawn.id === 'loot_box' || drawn.id === 'ddos') && (
                 <>
-                  <div style={{ width: '100%', height: '160px', flexShrink: 0, borderRadius: '12px', overflow: 'hidden' }}>
+                  <div style={{ width: '100%', height: '190px', flexShrink: 0, borderRadius: '16px', overflow: 'hidden' }}>
                     <DiceScene rollCount={rollCount} onResult={handleDieResult} singleDie={true} />
                   </div>
                   {rollBtn}
                   {drawn.id === 'loot_box' && lootEffect && (
                     <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
                       style={{
-                        background: `${lootEffect.col}22`, border: `1px solid ${lootEffect.col}`,
-                        borderRadius: '9px', padding: '6px 12px',
-                        color: lootEffect.col, fontWeight: 800, fontSize: '0.86rem', textAlign: 'center', flexShrink: 0,
+                        background: `${lootEffect.col}22`, border: `2px solid ${lootEffect.col}`,
+                        borderRadius: '12px', padding: '10px 20px',
+                        color: lootEffect.col, fontWeight: 800, fontSize: '1.1rem', textAlign: 'center', flexShrink: 0,
                       }}
                     >{lootEffect.text}</motion.div>
                   )}
                   {drawn.id === 'ddos' && ddosOutcome === 'self' && (
                     <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
                       style={{
-                        background: 'rgba(168,85,247,0.15)', border: '1px solid #a855f7',
-                        borderRadius: '9px', padding: '6px 12px',
-                        color: '#c084fc', fontWeight: 800, fontSize: '0.82rem', textAlign: 'center', flexShrink: 0,
+                        background: 'rgba(168,85,247,0.15)', border: '2px solid #a855f7',
+                        borderRadius: '12px', padding: '10px 20px',
+                        color: '#c084fc', fontWeight: 800, fontSize: '1.05rem', textAlign: 'center', flexShrink: 0,
                       }}
                     >😵 Votre prochain tour est sauté</motion.div>
                   )}
@@ -1509,14 +1554,14 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
               {canApply && (
                 <motion.button
                   initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }}
-                  whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
+                  whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                   onClick={handleApply}
                   style={{
                     background: `linear-gradient(135deg, ${drawn.color}, ${drawn.color}cc)`,
-                    border: `2px solid ${drawn.color}`,
-                    borderRadius: '22px', padding: '9px 26px',
-                    color: '#fff', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
-                    boxShadow: `0 4px 14px ${drawn.color}55`,
+                    border: `3px solid ${drawn.color}`,
+                    borderRadius: '26px', padding: '12px 36px',
+                    color: '#fff', fontWeight: 900, fontSize: '1.1rem', cursor: 'pointer',
+                    boxShadow: `0 4px 16px ${drawn.color}55`,
                     marginTop: 'auto', flexShrink: 0,
                   }}
                 >⚡ APPLIQUER</motion.button>
@@ -1526,51 +1571,54 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
         </div>
       </div>
 
-      {mode === 'evenement' && !applied && (
-        <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }} onClick={onDone}
-          style={{
-            background: 'rgba(255,255,255,0.07)', border: '2px solid rgba(255,255,255,0.18)',
-            borderRadius: '40px', padding: '10px 36px', color: '#888',
-            fontFamily: '"Fredoka One", sans-serif', fontSize: '1rem', fontWeight: 900,
-            letterSpacing: '2px', cursor: 'pointer', flexShrink: 0,
-          }}
-        >⏭ PASSER</motion.button>
-      )}
-      {mode === 'offre' && !applied && (
-        <motion.button whileHover={!offerLocked ? { scale: 1.06 } : {}} whileTap={!offerLocked ? { scale: 0.94 } : {}}
-          onClick={!offerLocked ? onDone : undefined}
-          disabled={offerLocked}
-          style={{
-            background: offerLocked ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.07)',
-            border: offerLocked ? '2px solid rgba(255,255,255,0.08)' : '2px solid rgba(255,255,255,0.18)',
-            borderRadius: '40px', padding: '10px 36px', color: offerLocked ? '#666' : '#888',
-            fontFamily: '"Fredoka One", sans-serif', fontSize: '1rem', fontWeight: 900,
-            letterSpacing: '2px', cursor: offerLocked ? 'not-allowed' : 'pointer', flexShrink: 0,
-          }}
-        >{offerLocked ? '🔒 OFFRE ENGAGÉE' : '⏭ IGNORER L’OFFRE'}</motion.button>
-      )}
-      {mode !== 'evenement' && (() => {
-        const canDraw = activePlayer && !flipping && !offerLocked && !isFinishedActive && (activePlayer.money ?? 0) >= 4
-        return (
-          <motion.button
-            whileHover={canDraw ? { scale: 1.06 } : {}}
-            whileTap={canDraw ? { scale: 0.94 } : {}}
-            onClick={canDraw ? drawCard : undefined}
+      {/* CONTENEUR DES BOUTONS D'ACTION POUR ÉVITER TOUTE SUPERPOSITION */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center', marginTop: '10px', flexShrink: 0, zIndex: 10 }}>
+        {mode === 'evenement' && !applied && (
+          <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }} onClick={onDone}
             style={{
-              background: canDraw ? 'linear-gradient(135deg, #a855f7, #7c3aed)' : 'rgba(255,255,255,0.06)',
-              border: canDraw ? '3px solid #a855f7' : '3px solid transparent',
-              borderRadius: '40px', padding: '11px 36px',
-              color: canDraw ? '#fff' : '#555',
-              fontFamily: '"Fredoka One", sans-serif',
-              fontSize: '1.1rem', fontWeight: 900, letterSpacing: '2px',
-              cursor: canDraw ? 'pointer' : 'not-allowed',
-              boxShadow: canDraw ? '0 4px 22px rgba(168,85,247,0.45)' : 'none', flexShrink: 0,
+              background: 'rgba(255,255,255,0.07)', border: '2px solid rgba(255,255,255,0.18)',
+              borderRadius: '40px', padding: '14px 44px', color: '#fff',
+              fontFamily: '"Fredoka One", sans-serif', fontSize: '1.15rem', fontWeight: 900,
+              letterSpacing: '2px', cursor: 'pointer',
             }}
-          >🎴 TIRER UNE CARTE — <span style={{ color: canDraw ? '#f0c040' : '#666', fontSize: '0.9em' }}>4€</span></motion.button>
-        )
-      })()}
+          >⏭ PASSER</motion.button>
+        )}
+        {mode === 'offre' && !applied && (
+          <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+            onClick={!offerLocked ? onDone : undefined}
+            disabled={offerLocked}
+            style={{
+              background: offerLocked ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.07)',
+              border: offerLocked ? '3px solid rgba(255,255,255,0.08)' : '3px solid rgba(255,255,255,0.18)',
+              borderRadius: '40px', padding: '14px 44px', color: offerLocked ? '#666' : '#fff',
+              fontFamily: '"Fredoka One", sans-serif', fontSize: '1.15rem', fontWeight: 900,
+              letterSpacing: '2px', cursor: offerLocked ? 'not-allowed' : 'pointer',
+            }}
+          >{offerLocked ? '🔒 OFFRE ENGAGÉE' : '⏭ IGNORER L’OFFRE'}</motion.button>
+        )}
+        {mode !== 'evenement' && (() => {
+          const canDraw = activePlayer && !flipping && !offerLocked && !isFinishedActive && (activePlayer.money ?? 0) >= 4
+          return (
+            <motion.button
+              whileHover={canDraw ? { scale: 1.05 } : {}}
+              whileTap={canDraw ? { scale: 0.95 } : {}}
+              onClick={canDraw ? drawCard : undefined}
+              style={{
+                background: canDraw ? 'linear-gradient(135deg, #a855f7, #7c3aed)' : 'rgba(255,255,255,0.06)',
+                border: canDraw ? '3px solid #a855f7' : '3px solid transparent',
+                borderRadius: '40px', padding: '16px 48px',
+                color: canDraw ? '#fff' : '#555',
+                fontFamily: '"Fredoka One", sans-serif',
+                fontSize: '1.3rem', fontWeight: 900, letterSpacing: '2px',
+                cursor: canDraw ? 'pointer' : 'not-allowed',
+                boxShadow: canDraw ? '0 4px 22px rgba(168,85,247,0.45)' : 'none',
+              }}
+            >🎴 TIRER UNE CARTE — <span style={{ color: canDraw ? '#f0c040' : '#666', fontSize: '0.9em' }}>4€</span></motion.button>
+          )
+        })()}
+      </div>
     </div>
   )
 }
 
-export default App
+export default App;

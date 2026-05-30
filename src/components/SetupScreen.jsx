@@ -20,7 +20,7 @@ export default function SetupScreen({ onStart }) {
     const players = Array.from({ length: count }, (_, i) => ({
       id: i + 1,
       name: names[i].trim() || `Joueur ${i + 1}`,
-      money: 40,
+      money: 50,
       items: [],
       cursed: false,
       lastPurchaseCost: 0,
