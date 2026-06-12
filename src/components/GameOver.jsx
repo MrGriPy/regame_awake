@@ -1,12 +1,10 @@
 import { motion } from 'framer-motion'
 import { PLAYER_COLORS, PLAYER_AVATARS } from '../gameData'
 
-const INITIAL_MONEY = 40
+const INITIAL_MONEY = 50
 const RANK_EMOJI = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
 
 export default function GameOver({ players, finishOrder, roundCount, onRestart }) {
-  const n = players.length
-
   const arrivalSorted = [...finishOrder].sort((a, b) => a.round - b.round)
   const rankPoints = [10, 7, 5, 3, 1]
   const arrivalPoints = {}

@@ -8,7 +8,7 @@ import OrderRoll from './components/OrderRoll'
 import GameOver from './components/GameOver'
 import TerminalOverlay from './components/TerminalOverlay'
 import DiceScene from './components/DiceScene'
-import { SHOP_ITEMS, ALL_SHOP_ITEMS, SPECIAL_EVENT_CARDS, EVENT_CARDS, BOARD, PLAYER_COLORS, PLAYER_AVATARS } from './gameData'
+import { SHOP_ITEMS, ALL_SHOP_ITEMS, SPECIAL_EVENT_CARDS, EVENT_CARDS, BOARD, PLAYER_COLORS, PLAYER_AVATARS, weightedPick } from './gameData'
 import './App.css'
 
 const STARS = [
@@ -38,7 +38,7 @@ function StarParticle({ x, y, delay }) {
   )
 }
 
-function ItemOverflowModal({ player, newItem, onKeepNew, onDiscard, onDecline }) {
+function ItemOverflowModal({ player, newItem, onDiscard, onDecline }) {
   const color = PLAYER_COLORS[player.colorIndex ?? 0]
   return (
     <motion.div
@@ -280,11 +280,73 @@ function App() {
   const [roundCount, setRoundCount] = useState(1)
   const [finishEvent, setFinishEvent] = useState(null)
   const [shopDiscountRounds, setShopDiscountRounds] = useState(0)
+  const [turnHistory, setTurnHistory] = useState([])
   const pendingFinishRef = useRef(null)
   const pendingSquareRef = useRef(null)
+  const restoringTurnRef = useRef(false)
+  const turnKeyRef = useRef(null)
 
   const activePlayerId = orderedIds[turnIndex] ?? null
   const activePlayer = players.find(p => p.id === activePlayerId) ?? null
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Tab') e.preventDefault() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Capture l'état du joueur au DÉBUT de chaque tour (pour pouvoir annuler ce tour)
+  useEffect(() => {
+    if (gamePhase !== 'game' || activePlayerId == null) return
+    const key = `${roundCount}:${turnIndex}`
+    if (restoringTurnRef.current) { restoringTurnRef.current = false; turnKeyRef.current = key; return }
+    if (turnKeyRef.current === key) return
+    turnKeyRef.current = key
+    const ap = players.find(p => p.id === activePlayerId)
+    if (!ap) return
+    setTurnHistory(h => [...h, { key, turnIndex, roundCount, playerId: activePlayerId, player: structuredClone(ap) }])
+  }, [gamePhase, activePlayerId, turnIndex, roundCount, players])
+
+  const handleUndoTurn = useCallback(() => {
+    setTurnHistory(h => {
+      if (h.length < 1) return h
+
+      // Le joueur actif a-t-il déjà agi ce tour-ci (déplacement, achat, objet consommé) ?
+      const samePlayer = (a, b) =>
+        !!a && !!b &&
+        a.money === b.money &&
+        (a.diceTotal ?? 0) === (b.diceTotal ?? 0) &&
+        (a.items?.map(i => i.uid).join(',') ?? '') === (b.items?.map(i => i.uid).join(',') ?? '')
+
+      const last = h[h.length - 1]
+      const lastPlayerNow = players.find(p => p.id === last.playerId)
+      const actedThisTurn = !samePlayer(lastPlayerNow, last.player)
+
+      // Si le joueur actif a agi : on restaure SON début de tour (rend objets/argent, le fait reculer).
+      // Sinon (il n'a rien fait) : on annule le tour précédent.
+      let snap, newStack
+      if (actedThisTurn) {
+        snap = last
+        newStack = h
+      } else {
+        if (h.length < 2) return h
+        newStack = h.slice(0, -1)
+        snap = newStack[newStack.length - 1]
+      }
+
+      restoringTurnRef.current = true
+      setTurnIndex(snap.turnIndex)
+      setRoundCount(snap.roundCount)
+      setPlayers(ps => ps.map(p => p.id === snap.playerId ? structuredClone(snap.player) : p))
+      setFinishOrder(fo => fo.filter(f => !(f.id === snap.playerId && (snap.player.diceTotal ?? 0) < 63)))
+      setSquareMode(null)
+      setFinishEvent(null)
+      setOverflowData(null)
+      pendingFinishRef.current = null
+      pendingSquareRef.current = null
+      return newStack
+    })
+  }, [players])
 
   const handleSetupComplete = useCallback((setupPlayers) => {
     setPlayers(setupPlayers.map(p => ({ ...p, diceTotal: 0 })))
@@ -297,11 +359,18 @@ function App() {
     setGamePhase('game')
   }, [])
 
-  const handleEndTurn = useCallback((rollTotal = 0) => {
+  const handleEndTurn = useCallback((rollTotal = 0, opts = {}) => {
     if (!activePlayerId) return
     
     // 1. Calcul de la nouvelle position (bridée à 63)
-    const currentTotal = Math.min((activePlayer?.diceTotal ?? 0) + rollTotal, 63)
+    let currentTotal = Math.min((activePlayer?.diceTotal ?? 0) + rollTotal, 63)
+
+    // Couronne du Fou : +2 cases si pas premier, -2 si premier
+    if (activePlayer?.items?.some(i => i.id === 'couronne_fou')) {
+      const maxOther = players.reduce((m, p) => (p.id !== activePlayerId ? Math.max(m, p.diceTotal ?? 0) : m), 0)
+      const isFirst = currentTotal >= maxOther
+      currentTotal = Math.max(0, Math.min(63, currentTotal + (isFirst ? -2 : 2)))
+    }
 
     // 2. Détection immédiate de l'arrivée
     const justFinished = currentTotal >= 63 && !finishOrder.find(f => f.id === activePlayerId)
@@ -379,7 +448,7 @@ function App() {
     }
 
     const sq = BOARD[Math.min(currentTotal, 63)]
-    if (!sq || sq === 'neutre' || sq === 'depart' || sq === 'arrivee') {
+    if (opts.skipSquare || !sq || sq === 'neutre' || sq === 'depart' || sq === 'arrivee') {
       doAdvance()
     } else {
       pendingSquareRef.current = doAdvance
@@ -497,8 +566,12 @@ function App() {
     const cost = overrideCost ?? item.cost
     if (!player || player.money < cost) return
     const newItem = { ...item, uid: `${itemId}-${Date.now()}-${Math.random()}` }
+    const rewardContrat = (p) => {
+      const c = p.items.filter(i => i.id === 'contrat').length
+      return c > 0 ? { ...p, money: p.money + 2 * c } : p
+    }
     if (player.items.length >= 3) {
-      setPlayers(ps => ps.map(p => p.id !== playerId ? p : ({
+      setPlayers(ps => ps.map(p => p.id !== playerId ? rewardContrat(p) : ({
         ...p,
         money: p.money - cost,
         lastPurchaseCost: cost,
@@ -507,7 +580,7 @@ function App() {
       setOverflowData({ playerId, newItem })
       return
     }
-    setPlayers(ps => ps.map(p => p.id !== playerId ? p : ({
+    setPlayers(ps => ps.map(p => p.id !== playerId ? rewardContrat(p) : ({
       ...p,
       money: p.money - cost,
       items: [...p.items, newItem],
@@ -522,12 +595,10 @@ function App() {
     ))
   }, [])
 
-  const cursePlayer = useCallback((playerId) => {
-    setPlayers(ps => ps.map(p => p.id === playerId ? { ...p, cursed: true } : p))
-  }, [])
-
-  const clearCurse = useCallback((playerId) => {
-    setPlayers(ps => ps.map(p => p.id === playerId ? { ...p, cursed: false } : p))
+  const recordItemUse = useCallback((playerId, itemId) => {
+    const CLASSIC = ['boost', 'turbo', 'freeze', 'swap', 'tornade', 'de_maudit', 'investissement']
+    if (!CLASSIC.includes(itemId)) return
+    setPlayers(ps => ps.map(p => p.id === playerId ? { ...p, lastClassicItem: itemId } : p))
   }, [])
 
   const [debugOpen, setDebugOpen] = useState(false)
@@ -545,6 +616,9 @@ function App() {
     setRoundCount(1)
     setShopDiscountRounds(0)
     setSquareMode(null)
+    setTurnHistory([])
+    turnKeyRef.current = null
+    restoringTurnRef.current = false
     setGamePhase('setup')
   }, [])
 
@@ -696,12 +770,12 @@ function App() {
               activePlayer={activePlayer}
               activePlayers={players}
               onConsumeItem={consumeItem}
-              onCursePlayer={cursePlayer}
-              onClearCurse={clearCurse}
               onEndTurn={handleEndTurn}
               onSkipTurn={skipTurnForPlayer}
               onSwapPlayers={swapPlayers}
               onModifyPosition={modifyPosition}
+              onSpendMoney={spendMoney}
+              onRecordItemUse={recordItemUse}
             />
           </div>
 
@@ -790,6 +864,19 @@ function App() {
                 )
               })}
             </div>
+            {turnHistory.length >= 2 && (
+              <motion.button
+                onClick={handleUndoTurn}
+                whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                title="Annuler le dernier tour joué (rend l'argent, retire l'objet, fait reculer le joueur)"
+                style={{
+                  marginTop: '12px', width: '100%',
+                  background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.5)',
+                  borderRadius: '10px', padding: '8px 12px', color: '#fca5a5',
+                  fontSize: '0.75rem', fontWeight: 800, letterSpacing: '1px', cursor: 'pointer',
+                }}
+              >↩ Annuler le tour</motion.button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -960,13 +1047,18 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
   const [targetId, setTargetId] = useState(null)
   const [applied, setApplied] = useState(false)
   const [spinPhase, setSpinPhase] = useState('idle')
-  const [currentIdx, setCurrentIdx] = useState(0)
+  const [, setCurrentIdx] = useState(0)
   const [winner, setWinner] = useState(null)
   const [offerLocked, setOfferLocked] = useState(false)
   const [, setEventReveal] = useState(false)
+  const [pariNumber, setPariNumber] = useState(null)
+  const [pariBet, setPariBet] = useState(5)
+  const [pariDice, setPariDice] = useState(null)
+  const [dilemmeChoice, setDilemmeChoice] = useState(null)
   const stripRef = useRef(null)
   const eventRevealTimerRef = useRef(null)
-  
+  const recentEventsRef = useRef([])
+
   const SLOT_REPS = 12, ITEM_W = 120, SLOT_GAP = 14, SLOT_STEP = 134
   const SLOT_VISIBLE = 5, SLOT_W = SLOT_VISIBLE * SLOT_STEP - SLOT_GAP
   const INITIAL_IDX = 2
@@ -975,7 +1067,12 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     const shuffle = (arr) => { const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]} return a }
     return [...Array(SLOT_REPS)].flatMap(() => shuffle(SHOP_ITEMS))
   }
-  const randomEvent = () => EVENT_CARDS[Math.floor(Math.random() * EVENT_CARDS.length)]
+  const randomEvent = () => {
+    const recent = recentEventsRef.current
+    const picked = weightedPick(EVENT_CARDS, 1, recent, 0.15)[0]
+    recentEventsRef.current = [picked.id, ...recent].slice(0, 4)
+    return picked
+  }
   const [stripItems, setStripItems] = useState(mkStrip)
 
   useEffect(() => {
@@ -983,6 +1080,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     setDrawn(null); setFlipping(false); setRollCount(0)
     setDieFinal(null); setDieRolling(false); setTargetId(null); setApplied(false)
     setSpinPhase('idle'); setCurrentIdx(0); setWinner(null)
+    setPariNumber(null); setPariBet(5); setPariDice(null); setDilemmeChoice(null)
     setStripItems(mkStrip())
   }, [activePlayer?.id])
 
@@ -994,6 +1092,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     setDieFinal(null); setDieRolling(false); setTargetId(null); setApplied(false)
     setOfferLocked(false)
     setSpinPhase('idle'); setWinner(null)
+    setPariNumber(null); setPariBet(5); setPariDice(null); setDilemmeChoice(null)
     setStripItems(mkStrip())
     if (m === 'evenement') {
       setEventReveal(false)
@@ -1066,6 +1165,43 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     if (dieRolling || dieFinal) return
     setDieRolling(true)
     setRollCount(c => c + 1)
+  }
+
+  // Inversement : le résultat est retourné (7 - dé), puis on avance d'autant
+  const handleInvResult = ({ die1 }) => {
+    setDieRolling(false)
+    setDieFinal(die1)
+    onModifyPosition?.(activePlayer.id, 7 - die1)
+    setApplied(true)
+  }
+
+  // Pari : on mise, on lance 2 dés, on gagne 2x la mise si un dé montre le chiffre choisi
+  const placePari = () => {
+    if (dieRolling || pariDice || pariNumber == null || !activePlayer) return
+    const money = activePlayer.money ?? 0
+    if (money < 1) return
+    const bet = Math.max(1, Math.min(pariBet, money))
+    setPariBet(bet)
+    onSpendMoney?.(activePlayer.id, bet)
+    setDieRolling(true)
+    setRollCount(c => c + 1)
+  }
+
+  const handlePariResult = ({ die1, die2 }) => {
+    setDieRolling(false)
+    setPariDice({ die1, die2 })
+    const win = die1 === pariNumber || die2 === pariNumber
+    if (win) onSpendMoney?.(activePlayer.id, -2 * pariBet)
+    setApplied(true)
+  }
+
+  // Dilemme cornélien : +5 cases OU +5€
+  const chooseDilemme = (choice) => {
+    if (dilemmeChoice || !activePlayer) return
+    setDilemmeChoice(choice)
+    if (choice === 'cases') onModifyPosition?.(activePlayer.id, 5)
+    else onSpendMoney?.(activePlayer.id, -5)
+    setApplied(true)
   }
 
   const otherPlayers = (players ?? []).filter(p => p.id !== activePlayer?.id)
@@ -1245,7 +1381,108 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
         )}
       </motion.div>
 
-      {applied ? (
+      {!drawn ? null : drawn.id === 'pari' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%', maxWidth: '460px', flexShrink: 0 }}>
+          <div style={{ width: '100%', height: '150px', borderRadius: '16px', overflow: 'hidden' }}>
+            <DiceScene rollCount={rollCount} onResult={handlePariResult} />
+          </div>
+          {pariDice ? (
+            <>
+              <div style={{
+                color: (pariDice.die1 === pariNumber || pariDice.die2 === pariNumber) ? '#22c55e' : '#ef4444',
+                fontWeight: 900, fontSize: '1.3rem', textAlign: 'center',
+              }}>
+                {(pariDice.die1 === pariNumber || pariDice.die2 === pariNumber)
+                  ? `🎉 Ton ${pariNumber} est sorti ! Tu gagnes ${pariBet * 2}€`
+                  : `💀 Pas de ${pariNumber}... tu perds ${pariBet}€`}
+              </div>
+              {contBtn}
+            </>
+          ) : dieRolling ? (
+            <div style={{ color: '#f59e0b', fontWeight: 800, fontSize: '1.1rem' }}>🎲 Lancer en cours...</div>
+          ) : (activePlayer?.money ?? 0) < 1 ? (
+            <>
+              <div style={{ color: '#fca5a5', fontWeight: 800, fontSize: '1.05rem', textAlign: 'center' }}>Pas assez d'argent pour parier.</div>
+              {contBtn}
+            </>
+          ) : (
+            <>
+              <div style={{ color: '#f59e0b', fontWeight: 800, fontSize: '0.95rem', letterSpacing: '1px' }}>1. Choisis un chiffre</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {[1, 2, 3, 4, 5, 6].map(n => (
+                  <motion.button key={n} whileTap={{ scale: 0.9 }} onClick={() => setPariNumber(n)}
+                    style={{
+                      width: '44px', height: '44px', borderRadius: '10px',
+                      background: pariNumber === n ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'rgba(255,255,255,0.08)',
+                      border: pariNumber === n ? '2px solid #fbbf24' : '2px solid rgba(255,255,255,0.18)',
+                      color: '#fff', fontWeight: 900, fontSize: '1.25rem', cursor: 'pointer',
+                    }}>{n}</motion.button>
+                ))}
+              </div>
+              <div style={{ color: '#f59e0b', fontWeight: 800, fontSize: '0.95rem', letterSpacing: '1px', marginTop: '4px' }}>2. Choisis ta mise</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <motion.button whileTap={{ scale: 0.9 }} onClick={() => setPariBet(b => Math.max(1, b - 1))}
+                  style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(255,255,255,0.1)', border: '2px solid rgba(255,255,255,0.2)', color: '#fff', fontWeight: 900, fontSize: '1.4rem', cursor: 'pointer' }}>−</motion.button>
+                <span style={{ color: '#FFD700', fontWeight: 900, fontSize: '1.5rem', minWidth: '70px', textAlign: 'center' }}>{Math.min(pariBet, activePlayer?.money ?? 0)}€</span>
+                <motion.button whileTap={{ scale: 0.9 }} onClick={() => setPariBet(b => Math.min(activePlayer?.money ?? 0, b + 1))}
+                  style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(255,255,255,0.1)', border: '2px solid rgba(255,255,255,0.2)', color: '#fff', fontWeight: 900, fontSize: '1.4rem', cursor: 'pointer' }}>+</motion.button>
+              </div>
+              <motion.button whileHover={pariNumber != null ? { scale: 1.05 } : {}} whileTap={pariNumber != null ? { scale: 0.95 } : {}}
+                onClick={placePari} disabled={pariNumber == null}
+                style={{
+                  background: pariNumber != null ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'rgba(255,255,255,0.07)',
+                  border: '2px solid rgba(245,158,11,0.5)', borderRadius: '26px', padding: '12px 36px',
+                  color: pariNumber != null ? '#1a1a2e' : '#777', fontWeight: 900, fontSize: '1.05rem',
+                  cursor: pariNumber != null ? 'pointer' : 'not-allowed', letterSpacing: '1px',
+                }}>🎲 Miser {Math.min(pariBet, activePlayer?.money ?? 0)}€ et lancer</motion.button>
+            </>
+          )}
+        </div>
+      ) : drawn.id === 'dilemme' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+          {dilemmeChoice ? (
+            <>
+              <div style={{ color: '#a78bfa', fontWeight: 900, fontSize: '1.3rem', textAlign: 'center' }}>
+                {dilemmeChoice === 'cases' ? '🏃 Tu avances de 5 cases !' : '💰 Tu gagnes 5€ !'}
+              </div>
+              {contBtn}
+            </>
+          ) : (
+            <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => chooseDilemme('cases')}
+                style={{ background: 'linear-gradient(135deg,#22c55e,#16a34a)', border: '3px solid #4ade80', borderRadius: '22px', padding: '20px 30px', color: '#fff', fontWeight: 900, fontSize: '1.2rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', minWidth: '150px' }}>
+                <span style={{ fontSize: '2.4rem' }}>🏃</span>+5 cases
+              </motion.button>
+              <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => chooseDilemme('money')}
+                style={{ background: 'linear-gradient(135deg,#f0c040,#d97706)', border: '3px solid #fbbf24', borderRadius: '22px', padding: '20px 30px', color: '#1a1a2e', fontWeight: 900, fontSize: '1.2rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', minWidth: '150px' }}>
+                <span style={{ fontSize: '2.4rem' }}>💰</span>+5€
+              </motion.button>
+            </div>
+          )}
+        </div>
+      ) : drawn.id === 'inversement' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%', maxWidth: '320px', flexShrink: 0 }}>
+          <div style={{ width: '100%', height: '150px', borderRadius: '16px', overflow: 'hidden' }}>
+            <DiceScene rollCount={rollCount} onResult={handleInvResult} singleDie={true} />
+          </div>
+          {dieFinal ? (
+            <>
+              <div style={{ color: '#06b6d4', fontWeight: 900, fontSize: '1.2rem', textAlign: 'center' }}>
+                🎲 {dieFinal} inversé → tu avances de {7 - dieFinal} case{7 - dieFinal > 1 ? 's' : ''} !
+              </div>
+              {contBtn}
+            </>
+          ) : (
+            <motion.button whileHover={!dieRolling ? { scale: 1.05 } : {}} whileTap={!dieRolling ? { scale: 0.95 } : {}}
+              onClick={rollDie} disabled={dieRolling}
+              style={{
+                background: dieRolling ? 'rgba(255,255,255,0.06)' : 'linear-gradient(135deg,#06b6d4,#0891b2)',
+                border: '2px solid #22d3ee', borderRadius: '24px', padding: '12px 30px',
+                color: dieRolling ? '#555' : '#fff', fontWeight: 900, fontSize: '1.05rem', cursor: dieRolling ? 'not-allowed' : 'pointer',
+              }}>🎲 Lancer le dé inversé</motion.button>
+          )}
+        </div>
+      ) : applied ? (
         <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
           style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
           <div style={{ fontSize: '3.5rem' }}>✅</div>

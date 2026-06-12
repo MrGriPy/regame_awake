@@ -22,7 +22,6 @@ export default function SetupScreen({ onStart }) {
       name: names[i].trim() || `Joueur ${i + 1}`,
       money: 50,
       items: [],
-      cursed: false,
       lastPurchaseCost: 0,
       colorIndex: i,
       avatar: avatars[i],

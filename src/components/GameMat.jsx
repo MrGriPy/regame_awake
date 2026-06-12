@@ -1,31 +1,32 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DiceScene from './DiceScene';
-import { PLAYER_COLORS, PLAYER_AVATARS } from '../gameData';
+import { PLAYER_COLORS, PLAYER_AVATARS, SHOP_ITEMS } from '../gameData';
 
 export default function GameMat({
   gameName = 'REGAME AWAKE',
   activePlayer = null,
   activePlayers = [],
   onConsumeItem,
-  onCursePlayer,
-  onClearCurse,
   onEndTurn,
   onSkipTurn,
   onSwapPlayers,
   onModifyPosition,
+  onSpendMoney,
+  onRecordItemUse,
 }) {
   const [rollCount, setRollCount] = useState(0);
   const [result, setResult] = useState(null);
   const [usedItemThisTurn, setUsedItemThisTurn] = useState(false);
   const [activeItemUid, setActiveItemUid] = useState(null);
   const [isRollingState, setIsRollingState] = useState(false);
-  const [curseTargetId, setCurseTargetId] = useState(null);
-  const [rollExtraDie, setRollExtraDie] = useState(false);
   const [itemTargetId, setItemTargetId] = useState(null);
   const [switchCount, setSwitchCount] = useState(0);
   const [teleporteurLabel, setTeleporteurLabel] = useState(null);
+  const [specialIcon, setSpecialIcon] = useState('🌀');
+  const [skipSquareOnEnd, setSkipSquareOnEnd] = useState(false);
   const [boostActive, setBoostActive] = useState(false);
+  const [rollingSingleDie, setRollingSingleDie] = useState(false);
   const isRollingRef = useRef(false);
   const pendingItemRef = useRef(null);
   const prevPlayerIdRef = useRef(null);
@@ -39,19 +40,26 @@ export default function GameMat({
       setSwitchCount(c => c + 1);
       setItemTargetId(null);
       setTeleporteurLabel(null);
+      setSpecialIcon('🌀');
+      setSkipSquareOnEnd(false);
       setBoostActive(false);
+      setRollingSingleDie(false);
     }
   }, [activePlayer]);
 
   const activePlayerRef = useRef(activePlayer);
   activePlayerRef.current = activePlayer;
-  const cbsRef = useRef({ onConsumeItem, onClearCurse, onSkipTurn, onSwapPlayers, onModifyPosition });
-  cbsRef.current = { onConsumeItem, onClearCurse, onSkipTurn, onSwapPlayers, onModifyPosition };
+  const cbsRef = useRef({ onConsumeItem, onSkipTurn, onSwapPlayers, onModifyPosition, onSpendMoney, onRecordItemUse });
+  cbsRef.current = { onConsumeItem, onSkipTurn, onSwapPlayers, onModifyPosition, onSpendMoney, onRecordItemUse };
 
   const selectedItem = activePlayer?.items.find(i => i.uid === activeItemUid) ?? null;
-  const isCursedSelected = selectedItem?.id === 'cursed_die';
-  const isExtraDie = selectedItem?.id === 'extra_die';
-  const isCursed = activePlayer?.cursed ?? false;
+  const lastClassic = activePlayer?.lastClassicItem ?? null;
+  const effItem = selectedItem
+    ? (selectedItem.id === 'encore'
+        ? (lastClassic ? { ...SHOP_ITEMS.find(i => i.id === lastClassic), uid: selectedItem.uid } : null)
+        : selectedItem)
+    : null;
+  const effId = effItem?.id ?? null;
   const otherPlayers = activePlayers.filter(p => p.id !== activePlayer?.id);
   const finishedIds = activePlayers.filter(p => (p.diceTotal ?? 0) >= 63).map(p => p.id);
   const finishedPlayerIds = new Set(finishedIds);
@@ -60,65 +68,69 @@ export default function GameMat({
   const INSTANT_IDS = ['freeze', 'swap', 'tornade', 'turbo'];
   const BOOST_IDS = ['boost'];
   const TARGET_IDS = ['freeze', 'swap', 'tornade'];
-  const PASSIVE_IDS = ['de_permanent', 'vip', 'contrat', 'abonnement'];
-  const isInstantItem = INSTANT_IDS.includes(selectedItem?.id);
-  const isBoostItem = BOOST_IDS.includes(selectedItem?.id);
-  const needsTarget = TARGET_IDS.includes(selectedItem?.id);
+  const PASSIVE_IDS = ['de_permanent', 'vip', 'contrat', 'abonnement', 'couronne_fou', 'privilegie', 'jackpot'];
+  const isInstantItem = INSTANT_IDS.includes(effId);
+  const isBoostItem = BOOST_IDS.includes(effId);
+  const isDeMaudit = effId === 'de_maudit';
+  const isInvest = effId === 'investissement';
+  const isTeleporteur = effId === 'teleporteur';
+  const needsTarget = TARGET_IDS.includes(effId) || isDeMaudit;
+  const isEncoreEmpty = selectedItem?.id === 'encore' && !effItem;
   const hasPermExtraDie = activePlayer?.items.some(i => i.id === 'de_permanent') ?? false;
-  const isTeleporteur = selectedItem?.id === 'teleporteur';
   const activeItems = activePlayer?.items.filter(i => !PASSIVE_IDS.includes(i.id)) ?? [];
   const passiveItems = activePlayer?.items.filter(i => PASSIVE_IDS.includes(i.id)) ?? [];
 
   const handleBoost = () => {
     if (!activePlayer || !selectedItem || isFinishedActive || usedItemThisTurn || !isBoostItem) return;
-    const { onConsumeItem: consume } = cbsRef.current;
+    const { onConsumeItem: consume, onRecordItemUse: record } = cbsRef.current;
     const id = activePlayer.id;
     setBoostActive(true);
     consume(id, selectedItem.uid);
+    record?.(id, 'boost');
     setActiveItemUid(null);
     setUsedItemThisTurn(true);
   };
 
   const handleRoll = () => {
-    if (isRollingRef.current || !activePlayer || isCursedSelected || isInstantItem || isFinishedActive) return;
+    if (isRollingRef.current || !activePlayer || isInstantItem || isBoostItem || isFinishedActive) return;
+    if (isEncoreEmpty) return;
+    if (isDeMaudit && !itemTargetId) return;
     isRollingRef.current = true;
     setIsRollingState(true);
+    setRollingSingleDie(isTeleporteur || isDeMaudit || isInvest);
     setActiveItemUid(null);
-    const chosenItem = activeItemUid
-      ? activePlayer.items.find(i => i.uid === activeItemUid) ?? null
-      : null;
-    pendingItemRef.current = chosenItem
-      ? { item: chosenItem, playerId: activePlayer.id }
+    pendingItemRef.current = effItem
+      ? { item: effItem, playerId: activePlayer.id, targetId: itemTargetId, consumeUid: selectedItem.uid }
       : null;
     setUsedItemThisTurn(true);
-    setRollExtraDie(isExtraDie);
     setResult(null);
     setRollCount(c => c + 1);
     setTimeout(() => { isRollingRef.current = false; setIsRollingState(false); }, 4500);
   };
 
-  const handleInflict = () => {
-    if (!curseTargetId || !activePlayer || !selectedItem || finishedPlayerIds.has(curseTargetId) || isFinishedActive || usedItemThisTurn) return;
-    onCursePlayer(curseTargetId);
-    cbsRef.current.onConsumeItem(activePlayer.id, selectedItem.uid);
-    setActiveItemUid(null);
-    setCurseTargetId(null);
-    setUsedItemThisTurn(true);
-  };
-
   const handleUseInstant = () => {
-    if (!activePlayer || !selectedItem || isFinishedActive || usedItemThisTurn) return;
-    if (TARGET_IDS.includes(selectedItem.id) && (!itemTargetId || finishedPlayerIds.has(itemTargetId))) return;
-    const { onConsumeItem: consume, onSkipTurn: skipT, onSwapPlayers: swap, onModifyPosition: modPos } = cbsRef.current;
+    if (!activePlayer || !effItem || isFinishedActive || usedItemThisTurn) return;
+    if (TARGET_IDS.includes(effItem.id) && (!itemTargetId || finishedPlayerIds.has(itemTargetId))) return;
+    const { onConsumeItem: consume, onSkipTurn: skipT, onSwapPlayers: swap, onModifyPosition: modPos, onRecordItemUse: record } = cbsRef.current;
     const id = activePlayer.id;
-    switch (selectedItem.id) {
+    const eid = effItem.id;
+    if (eid === 'turbo') {
+      consume(id, selectedItem.uid);
+      record?.(id, 'turbo');
+      setActiveItemUid(null);
+      setItemTargetId(null);
+      setUsedItemThisTurn(true);
+      onEndTurn?.(8, { skipSquare: true });
+      return;
+    }
+    switch (eid) {
       case 'freeze':  skipT?.(itemTargetId); break;
       case 'swap':    swap?.(id, itemTargetId); break;
       case 'tornade': modPos?.(itemTargetId, -6); break;
-      case 'turbo':   skipT?.(id); break;
       default: break;
     }
     consume(id, selectedItem.uid);
+    record?.(id, eid);
     setActiveItemUid(null);
     setItemTargetId(null);
     setUsedItemThisTurn(true);
@@ -131,39 +143,57 @@ export default function GameMat({
     pendingItemRef.current = null;
     const item = pending?.item ?? null;
     const rollPlayerId = pending?.playerId ?? null;
+    const targetId = pending?.targetId ?? null;
+    const consumeUid = pending?.consumeUid ?? null;
     const ap = activePlayerRef.current;
-    const { onConsumeItem, onClearCurse, onModifyPosition } = cbsRef.current;
-
-    if (ap?.cursed) onClearCurse?.(ap.id);
+    const { onConsumeItem, onModifyPosition, onSpendMoney, onRecordItemUse } = cbsRef.current;
 
     const hasAbonnement = ap?.items?.some(i => i.id === 'abonnement') ?? false;
-    const applyAbon = (base) => hasAbonnement ? { ...base, bonus: 2, bonusLabel: '+2 📡', total: base.total + 2 } : base;
-    const applyBoost = (base) => boostActive ? { ...base, bonus: (base.bonus || 0) + 4, bonusLabel: '+4 🚀', total: base.total + 4 } : base;
+    const hasJackpot = ap?.items?.some(i => i.id === 'jackpot') ?? false;
+    const isDouble = res.die2 !== undefined && res.die1 === res.die2;
+    const addLabel = (base, s) => base.bonusLabel ? `${base.bonusLabel} ${s}` : s;
+    const applyAbon = (base) => hasAbonnement ? { ...base, bonus: (base.bonus || 0) + 2, bonusLabel: addLabel(base, '+2 📡'), total: base.total + 2 } : base;
+    const applyBoost = (base) => boostActive ? { ...base, bonus: (base.bonus || 0) + 4, bonusLabel: addLabel(base, '+4 🚀'), total: base.total + 4 } : base;
+    const applyJackpot = (base) => (hasJackpot && isDouble) ? { ...base, bonus: (base.bonus || 0) + 6, bonusLabel: addLabel(base, '+6 🎰'), total: base.total + 6 } : base;
+    const finalize = (base) => applyJackpot(applyBoost(applyAbon(base)));
 
     if (item && rollPlayerId) {
       if (item.id === 'teleporteur') {
         const die = res.die1;
         const delta = die <= 2 ? -3 : die <= 5 ? 5 : 8;
         const label = die <= 2 ? `🌀 Dé: ${die} → ↙ Reculer de 3 cases` : die <= 5 ? `🌀 Dé: ${die} → ↗ Avancer de 5 cases` : `🌀 Dé: ${die} → 🚀 Avancer de 8 cases`;
-        
         onModifyPosition?.(rollPlayerId, delta);
+        setSpecialIcon('🌀');
         setTeleporteurLabel(label);
         setResult({ ...res, total: 0 });
-      } else if (item.id === 'mushroom') {
-        const base = { ...res, bonus: 3, bonusLabel: '+3 🍄', total: Math.max(0, res.total + 3) };
-        setResult(applyBoost(applyAbon(base)));
+      } else if (item.id === 'de_maudit') {
+        const die = res.die1;
+        if (targetId) onModifyPosition?.(targetId, -die);
+        const tName = activePlayers.find(p => p.id === targetId)?.name ?? 'La cible';
+        setSpecialIcon('😈');
+        setTeleporteurLabel(`😈 ${tName} recule de ${die} case${die > 1 ? 's' : ''}`);
+        setSkipSquareOnEnd(true);
+        setResult({ ...res, total: 0 });
+      } else if (item.id === 'investissement') {
+        const die = res.die1;
+        onSpendMoney?.(rollPlayerId, -die);
+        onModifyPosition?.(rollPlayerId, -die);
+        setSpecialIcon('💸');
+        setTeleporteurLabel(`💸 +${die}€ et −${die} case${die > 1 ? 's' : ''}`);
+        setResult({ ...res, total: 0 });
       } else {
-        setResult(applyBoost(applyAbon(res)));
+        setResult(finalize(res));
       }
-      if (!PASSIVE_IDS.includes(item.id)) onConsumeItem(rollPlayerId, item.uid);
+      if (consumeUid && !PASSIVE_IDS.includes(item.id)) onConsumeItem(rollPlayerId, consumeUid);
+      onRecordItemUse?.(rollPlayerId, item.id);
     } else {
-      setResult(applyBoost(applyAbon(res)));
+      setResult(finalize(res));
     }
     setActiveItemUid(null);
     setBoostActive(false);
-  }, [boostActive]);
+  }, [boostActive, activePlayers]);
 
-  const rollBtnActive = activePlayer && !isCursedSelected && !isInstantItem && !isFinishedActive;
+  const rollBtnActive = activePlayer && !isInstantItem && !isFinishedActive;
 
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '460px', marginTop: '60px' }}>
@@ -183,12 +213,12 @@ export default function GameMat({
               style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', width: '100%' }}
             >
               <div style={{
-                color: isCursed ? '#ff6b6b' : '#f0c040',
+                color: '#f0c040',
                 fontSize: '0.82rem', fontWeight: 800,
                 letterSpacing: '1.5px', textTransform: 'uppercase',
-                textShadow: `0 0 10px ${isCursed ? '#ff6b6b88' : '#f0c04088'}`,
+                textShadow: '0 0 10px #f0c04088',
               }}>
-                {isCursed ? '☠️ Dés Maudits — ' : '🎯 '}Tour de {activePlayer.name}
+                🎯 Tour de {activePlayer.name}
               </div>
             </motion.div>
           ) : (
@@ -246,43 +276,7 @@ export default function GameMat({
           pointerEvents: 'none'
         }}>
           <AnimatePresence>
-            {isCursedSelected && targetableOtherPlayers.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%', pointerEvents: 'auto' }}
-              >
-                <div style={{ color: '#ff6b6b', fontSize: '0.85rem', letterSpacing: '1.5px', fontWeight: 900, textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
-                  ☠️ CHOISIR UNE CIBLE
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '240px' }}>
-                  {targetableOtherPlayers.map(p => {
-                    const idx = p.id - 1;
-                    const isTarget = curseTargetId === p.id;
-                    return (
-                      <motion.button
-                        key={p.id}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => setCurseTargetId(prev => prev === p.id ? null : p.id)}
-                        style={{
-                          width: '100%',
-                          background: isTarget ? 'linear-gradient(135deg, #dc2626, #991b1b)' : 'rgba(15,15,30,0.9)',
-                          border: isTarget ? `2px solid ${PLAYER_COLORS[idx]}` : '2px solid rgba(255,255,255,0.2)',
-                          borderRadius: '12px', padding: '8px 12px',
-                          cursor: 'pointer', fontSize: '1rem', color: '#fff', fontWeight: 800,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
-                          boxShadow: isTarget ? '0 0 12px #dc2626cc' : '0 4px 8px rgba(0,0,0,0.4)',
-                        }}
-                      >
-                        <span style={{ fontSize: '1.4rem' }}>{PLAYER_AVATARS[idx]}</span>
-                        <span>{p.name}</span>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            )}
-
-            {isInstantItem && needsTarget && targetableOtherPlayers.length > 0 && !result && (
+            {needsTarget && targetableOtherPlayers.length > 0 && !result && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
                 style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%', pointerEvents: 'auto' }}
@@ -327,16 +321,15 @@ export default function GameMat({
           width: '100%', 
           position: 'relative', 
           zIndex: 1,
-          opacity: ((isCursedSelected || (isInstantItem && needsTarget)) && targetableOtherPlayers.length > 0 && !result) ? 0 : 1,
+          opacity: (needsTarget && targetableOtherPlayers.length > 0 && !result) ? 0 : 1,
           transition: 'opacity 0.2s ease'
         }}>
           <DiceScene
             rollCount={rollCount}
             onResult={handleResult}
-            extraDie={isExtraDie || rollExtraDie || hasPermExtraDie}
-            cursed={isCursed}
+            extraDie={hasPermExtraDie}
             switchCount={switchCount}
-            singleDie={isTeleporteur}
+            singleDie={isTeleporteur || isDeMaudit || isInvest || rollingSingleDie}
           />
         </div>
 
@@ -364,7 +357,7 @@ export default function GameMat({
               key="end-turn"
               initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
               whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.93 }}
-              onClick={() => onEndTurn(result?.total ?? 0)}
+              onClick={() => onEndTurn(result?.total ?? 0, { skipSquare: skipSquareOnEnd })}
               style={{
                 background: 'linear-gradient(135deg, #7c3aed, #5b21b6)',
                 border: '3px solid #a78bfa',
@@ -413,31 +406,14 @@ export default function GameMat({
                 ☝️ Choisissez une cible
               </div>
             )
-          ) : isCursedSelected ? (
-            curseTargetId ? (
-              <motion.button
-                whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
-                onClick={handleInflict}
-                style={{
-                  background: 'linear-gradient(135deg, #dc2626, #991b1b)',
-                  color: '#fff', fontWeight: 900, fontSize: '1rem', letterSpacing: '1.5px',
-                  padding: '8px 28px', borderRadius: '30px',
-                  border: '3px solid #ff6b6b', cursor: 'pointer',
-                  boxShadow: '0 4px 20px rgba(220,38,38,0.7)',
-                  fontFamily: '"Fredoka One", "Nunito", sans-serif',
-                  zIndex: 1,
-                }}
-              >
-                ⚡ INFLIGER À {activePlayers.find(p => p.id === curseTargetId)?.name}
-              </motion.button>
-            ) : (
-              <div style={{
-                color: '#ff6b6b88', fontSize: '0.78rem', fontStyle: 'italic',
-                paddingBottom: '4px', zIndex: 1,
-              }}>
-                ☝️ Choisissez une cible
-              </div>
-            )
+          ) : isEncoreEmpty ? (
+            <div style={{ color: '#f0c04088', fontSize: '0.78rem', fontStyle: 'italic', paddingBottom: '4px', zIndex: 1 }}>
+              ↩️ Aucun objet à rejouer
+            </div>
+          ) : (isDeMaudit && !itemTargetId) ? (
+            <div style={{ color: '#f0c04088', fontSize: '0.78rem', fontStyle: 'italic', paddingBottom: '4px', zIndex: 1 }}>
+              ☝️ Choisissez une cible
+            </div>
           ) : (
             <motion.button
               whileHover={rollBtnActive ? { scale: 1.08 } : {}}
@@ -446,7 +422,7 @@ export default function GameMat({
               disabled={!rollBtnActive}
               style={{
                 background: rollBtnActive
-                  ? selectedItem
+                  ? effItem
                     ? 'linear-gradient(135deg, #d97706, #b45309)'
                     : 'linear-gradient(135deg, #e63946, #c1121f)'
                   : 'rgba(255,255,255,0.08)',
@@ -454,17 +430,17 @@ export default function GameMat({
                 fontWeight: 900, fontSize: '1rem', letterSpacing: '2px',
                 padding: '8px 32px', borderRadius: '30px',
                 border: rollBtnActive
-                  ? selectedItem ? '3px solid #f0c040' : '3px solid #ff6b6b'
+                  ? effItem ? '3px solid #f0c040' : '3px solid #ff6b6b'
                   : '3px solid transparent',
                 cursor: rollBtnActive ? 'pointer' : 'not-allowed',
                 boxShadow: rollBtnActive
-                  ? selectedItem ? '0 4px 20px rgba(217,119,6,0.7)' : '0 4px 20px rgba(230,57,70,0.6)'
+                  ? effItem ? '0 4px 20px rgba(217,119,6,0.7)' : '0 4px 20px rgba(230,57,70,0.6)'
                   : 'none',
                 fontFamily: '"Fredoka One", "Nunito", sans-serif',
                 zIndex: 1, transition: 'all 0.2s',
               }}
             >
-              {selectedItem ? `🎲 LANCER ${selectedItem.icon}` : '🎲 LANCER'}
+              {effItem ? `🎲 LANCER ${effItem.icon}` : '🎲 LANCER'}
             </motion.button>
           )}
         </div>
@@ -488,7 +464,6 @@ export default function GameMat({
                       if (isFinishedActive || isRollingState) return;
                       if (usedItemThisTurn && activeItemUid !== item.uid) return;
                       setActiveItemUid(prev => prev === item.uid ? null : item.uid);
-                      setCurseTargetId(null);
                       setItemTargetId(null);
                     }}
                     title={`${item.name} — ${item.desc}`}
@@ -577,7 +552,7 @@ export default function GameMat({
                 initial={{ scale: 0.5 }} animate={{ scale: [1.4, 1] }} transition={{ type: 'spring' }}
                 style={{ color: '#f0c040', fontSize: '3.6rem', fontWeight: 900, textShadow: '0 0 20px #f0c040' }}
               >
-                {teleporteurLabel ? "🌀" : result.total}
+                {teleporteurLabel ? specialIcon : result.total}
               </motion.span>
             </div>
           </motion.div>

@@ -47,12 +47,6 @@ export default function PlayerCard({ player, index, isActive, itemsOnSide = fals
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div style={{ fontSize: '4.2rem', lineHeight: 1, position: 'relative' }}>
             {player.avatar ?? PLAYER_AVATARS[index]}
-            {player.cursed && (
-              <span style={{
-                position: 'absolute', top: -8, right: -14,
-                fontSize: '1.8rem', filter: 'drop-shadow(0 0 4px #ff6b6b)',
-              }}>☠️</span>
-            )}
           </div>
 
           <div

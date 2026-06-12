@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ALL_SHOP_ITEMS, PLAYER_COLORS, PLAYER_AVATARS } from "../gameData";
+import { ALL_SHOP_ITEMS, PLAYER_COLORS, PLAYER_AVATARS, weightedPick } from "../gameData";
 
 function pickItems(pool, count) {
   const arr = [...pool];
@@ -17,10 +17,18 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
   const [boughtId, setBoughtId] = useState(null);
   const [flash, setFlash] = useState(null);
   const seenSpecialsRef = useRef({});
+  const recentRegularsRef = useRef([]);
 
   const hasVIP = activePlayer?.items?.some((i) => i.id === "vip");
+  const hasPrivilege = activePlayer?.items?.some((i) => i.id === "privilegie");
   const cardCount = hasVIP ? 4 : 3;
   const isFinished = (activePlayer?.diceTotal ?? 0) >= 63;
+
+  // Prix effectif : Privilégié rend gratuits les objets < 15€, sinon Soldes (-50%)
+  const priceFor = (item) => {
+    if (hasPrivilege && item.cost < 15) return 0;
+    return shopDiscountRounds > 0 ? Math.ceil(item.cost / 2) : item.cost;
+  };
 
   const rollItems = useCallback(() => {
     const pid = activePlayer?.id;
@@ -37,7 +45,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
         ? pickItems(availSpecials, 1)
         : [];
     specialArr.forEach((s) => seen.add(s.id));
-    const regularArr = pickItems(regulars, count - specialArr.length);
+    const regularArr = weightedPick(regulars, count - specialArr.length, recentRegularsRef.current, 0.15);
+    recentRegularsRef.current = regularArr.map((i) => i.id);
     setVisitItems(pickItems([...specialArr, ...regularArr], count));
   }, [hasVIP, activePlayer?.id]);
 
@@ -60,7 +69,7 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
   };
 
   const handleBuy = (item) => {
-    const effectiveCost = shopDiscountRounds > 0 ? Math.ceil(item.cost / 2) : item.cost;
+    const effectiveCost = priceFor(item);
     if (!activePlayer || activePlayer.money < effectiveCost || boughtId || isFinished) return;
     onBuy(activePlayer.id, item.id, effectiveCost);
     setBoughtId(item.id);
@@ -238,7 +247,8 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
           >
             <AnimatePresence mode="popLayout">
               {visitItems.map((item, i) => {
-                const itemCost = shopDiscountRounds > 0 ? Math.ceil(item.cost / 2) : item.cost;
+                const itemCost = priceFor(item);
+                const isFreeByPrivilege = hasPrivilege && item.cost < 15;
                 const canAfford = activePlayer.money >= itemCost;
                 const isBought = boughtId === item.id;
                 const isDisabled = !!boughtId && !isBought;
@@ -359,9 +369,20 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
                           fontWeight: 900,
                         }}
                       >
-                        💰 {itemCost}€
+                        {itemCost === 0 ? '🎩 Gratuit' : `💰 ${itemCost}€`}
                       </span>
-                      {shopDiscountRounds > 0 && (
+                      {isFreeByPrivilege ? (
+                        <span
+                          style={{
+                            color: '#fde68a',
+                            fontSize: '0.85rem',
+                            marginTop: '4px',
+                            fontWeight: 700
+                          }}
+                        >
+                          🎩 Privilégié
+                        </span>
+                      ) : shopDiscountRounds > 0 && (
                         <span
                           style={{
                             color: '#a5b4fc',

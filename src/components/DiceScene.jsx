@@ -297,7 +297,7 @@ function Die({ rollCount, onRollComplete, bg = '#f8f5f0', dot = '#1a1a2e', posX 
   );
 }
 
-export default function DiceScene({ rollCount, onResult, extraDie = false, cursed = false, switchCount = 0, singleDie = false }) {
+export default function DiceScene({ rollCount, onResult, extraDie = false, switchCount = 0, singleDie = false }) {
   const stateRef = useRef({});
   stateRef.current = { onResult, extraDie, singleDie };
 
@@ -334,7 +334,7 @@ export default function DiceScene({ rollCount, onResult, extraDie = false, curse
     });
   }
 
-  const allowedFaces = cursed ? [1, 2, 3] : null;
+  const allowedFaces = null;
   const diceCount = singleDie ? 1 : extraDie ? 3 : 2;
   const scatterPositions = useMemo(() => generateScatterPositions(diceCount), [rollCount, diceCount]);
   const delays = singleDie ? [0] : extraDie ? [0, 0.15, 0.30] : [0, 0.25];
