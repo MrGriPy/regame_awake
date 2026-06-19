@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ALL_SHOP_ITEMS, PLAYER_COLORS, PLAYER_AVATARS, weightedPick } from "../gameData";
+import { playPurchaseSfx } from "../sfx";
 
 function pickItems(pool, count) {
   const arr = [...pool];
@@ -63,6 +64,7 @@ export default function Shop({ activePlayer, shopDiscountRounds, onBuy, onSpendM
 
   const handleReroll = () => {
     if (!canReroll) return;
+    playPurchaseSfx();
     onSpendMoney(activePlayer.id, rerollCost);
     setRerollCount((r) => r + 1);
     rollItems();

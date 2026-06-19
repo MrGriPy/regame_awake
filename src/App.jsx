@@ -9,7 +9,11 @@ import GameOver from './components/GameOver'
 import TerminalOverlay from './components/TerminalOverlay'
 import DiceScene from './components/DiceScene'
 import { SHOP_ITEMS, ALL_SHOP_ITEMS, SPECIAL_EVENT_CARDS, EVENT_CARDS, BOARD, PLAYER_COLORS, PLAYER_AVATARS, weightedPick } from './gameData'
+import casinoMusic from './assets/Theme from Balatro but its Luigis Casino (using the SM64 Sound Font).mp3'
+import { playGoodSfx, playBadSfx, playPurchaseSfx } from './sfx'
 import './App.css'
+
+const MUSIC_VOLUME = 0.35
 
 const STARS = [
   { x: '7%',  y: '10%', delay: 0    },
@@ -285,6 +289,9 @@ function App() {
   const pendingSquareRef = useRef(null)
   const restoringTurnRef = useRef(false)
   const turnKeyRef = useRef(null)
+  const musicRef = useRef(null)
+  const musicFadeRef = useRef(null)
+  const [musicMuted, setMusicMuted] = useState(false)
 
   const activePlayerId = orderedIds[turnIndex] ?? null
   const activePlayer = players.find(p => p.id === activePlayerId) ?? null
@@ -357,7 +364,46 @@ function App() {
     setOrderedIds(ordered.map(p => p.id))
     setTurnIndex(0)
     setGamePhase('game')
+    // Démarre (ou relance) la musique d'arrière-plan en boucle au clic sur "Jouer"
+    if (musicFadeRef.current) { clearInterval(musicFadeRef.current); musicFadeRef.current = null }
+    if (!musicRef.current) {
+      musicRef.current = new Audio(casinoMusic)
+      musicRef.current.loop = true
+    }
+    musicRef.current.muted = musicMuted
+    musicRef.current.volume = MUSIC_VOLUME
+    musicRef.current.currentTime = 0
+    musicRef.current.play().catch(() => {})
+  }, [musicMuted])
+
+  const toggleMusicMute = useCallback(() => {
+    setMusicMuted(m => {
+      const next = !m
+      if (musicRef.current) musicRef.current.muted = next
+      return next
+    })
   }, [])
+
+  // Fondu de sortie quand la partie est intégralement terminée
+  useEffect(() => {
+    if (gamePhase !== 'gameover') return
+    const a = musicRef.current
+    if (!a) return
+    if (musicFadeRef.current) clearInterval(musicFadeRef.current)
+    musicFadeRef.current = setInterval(() => {
+      const au = musicRef.current
+      if (!au) { clearInterval(musicFadeRef.current); musicFadeRef.current = null; return }
+      const next = au.volume - MUSIC_VOLUME / 30
+      if (next <= 0.001) {
+        au.volume = 0
+        au.pause()
+        clearInterval(musicFadeRef.current)
+        musicFadeRef.current = null
+      } else {
+        au.volume = next
+      }
+    }, 60)
+  }, [gamePhase])
 
   const handleEndTurn = useCallback((rollTotal = 0, opts = {}) => {
     if (!activePlayerId) return
@@ -565,6 +611,7 @@ function App() {
     const player = players.find(p => p.id === playerId)
     const cost = overrideCost ?? item.cost
     if (!player || player.money < cost) return
+    playPurchaseSfx()
     const newItem = { ...item, uid: `${itemId}-${Date.now()}-${Math.random()}` }
     const rewardContrat = (p) => {
       const c = p.items.filter(i => i.id === 'contrat').length
@@ -609,6 +656,8 @@ function App() {
   }, [])
 
   const handleRestart = useCallback(() => {
+    if (musicFadeRef.current) { clearInterval(musicFadeRef.current); musicFadeRef.current = null }
+    if (musicRef.current) { musicRef.current.pause(); musicRef.current.currentTime = 0 }
     setPlayers([])
     setOrderedIds([])
     setTurnIndex(0)
@@ -715,6 +764,7 @@ function App() {
             onSetShopDiscount={applyShopDiscount}
             startMode={squareMode}
             onDone={handleSquareDone}
+            muted={musicMuted}
           />
         </div>
 
@@ -776,6 +826,7 @@ function App() {
               onModifyPosition={modifyPosition}
               onSpendMoney={spendMoney}
               onRecordItemUse={recordItemUse}
+              musicMuted={musicMuted}
             />
           </div>
 
@@ -903,6 +954,24 @@ function App() {
             }}
           >🗺 MINIMAP</motion.button>
         </div>
+      )}
+
+      {(gamePhase === 'game' || gamePhase === 'gameover') && (
+        <motion.button
+          whileHover={{ scale: 1.12 }} whileTap={{ scale: 0.88 }}
+          onClick={toggleMusicMute}
+          title={musicMuted ? 'Activer la musique' : 'Couper la musique'}
+          style={{
+            position: 'fixed', bottom: '14px', left: '14px',
+            width: '36px', height: '36px', borderRadius: '50%',
+            background: musicMuted ? 'rgba(255,255,255,0.07)' : 'rgba(240,192,64,0.22)',
+            border: `1px solid ${musicMuted ? 'rgba(255,255,255,0.15)' : 'rgba(240,192,64,0.6)'}`,
+            color: musicMuted ? '#555' : '#f0c040',
+            fontSize: '1rem', cursor: 'pointer', zIndex: 9999,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            backdropFilter: 'blur(8px)',
+          }}
+        >{musicMuted ? '🔇' : '🔊'}</motion.button>
       )}
 
       {gamePhase === 'game' && (
@@ -1037,7 +1106,38 @@ function FinishOverlay({ event, onContinue }) {
   )
 }
 
-function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSpendMoney, onGainItem, onSetShopDiscount, startMode, onDone }) {
+function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSpendMoney, onGainItem, onSetShopDiscount, startMode, onDone, muted = false }) {
+  const audioCtxRef = useRef(null)
+  const getAudioCtx = () => {
+    if (!audioCtxRef.current) {
+      const AC = window.AudioContext || window.webkitAudioContext
+      if (!AC) return null
+      audioCtxRef.current = new AC()
+    }
+    return audioCtxRef.current
+  }
+  // Un "blip" synthétisé (style roulette Mario Kart) programmé à l'instant t
+  const playBlip = (ctx, t, freq, dur = 0.05, vol = 0.14, type = 'square') => {
+    const osc = ctx.createOscillator()
+    const g = ctx.createGain()
+    osc.type = type
+    osc.frequency.setValueAtTime(freq, t)
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.004)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    osc.connect(g); g.connect(ctx.destination)
+    osc.start(t); osc.stop(t + dur + 0.02)
+  }
+  // Inverse la courbe cubic-bezier(x1,y1,x2,y2) : pour une fraction de progression,
+  // renvoie la fraction de temps correspondante (-> ticks serrés au début, espacés à la fin)
+  const easeTimeForProgress = (x1, y1, x2, y2) => {
+    const bez = (s, a, b) => { const c = 1 - s; return 3 * c * c * s * a + 3 * c * s * s * b + s * s * s }
+    return (pf) => {
+      let lo = 0, hi = 1, s = pf
+      for (let i = 0; i < 24; i++) { s = (lo + hi) / 2; (bez(s, y1, y2) < pf ? (lo = s) : (hi = s)) }
+      return bez(s, x1, x2)
+    }
+  }
   const [mode, setMode] = useState(null)
   const [drawn, setDrawn] = useState(null)
   const [flipping, setFlipping] = useState(false)
@@ -1121,8 +1221,35 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     el.style.transition = 'none'
     el.style.transform = `translateX(${slotOffset(INITIAL_IDX)}px)`
     void el.offsetHeight
-    el.style.transition = 'transform 3.3s cubic-bezier(0.25, 0.8, 0.35, 1)'
+    const SPIN_DUR = 3.3
+    el.style.transition = `transform ${SPIN_DUR}s cubic-bezier(0.25, 0.8, 0.35, 1)`
     el.style.transform = `translateX(${slotOffset(spinTarget)}px)`
+
+    // Sound design : un blip à chaque objet qui passe au centre, calé sur l'easing.
+    // Effet sonore indépendant du mute musique (le mute ne coupe que la musique).
+    {
+      const ctx = getAudioCtx()
+      if (ctx) {
+        if (ctx.state === 'suspended') ctx.resume()
+        const t0 = ctx.currentTime
+        const total = spinTarget - INITIAL_IDX
+        const timeOf = easeTimeForProgress(0.25, 0.8, 0.35, 1)
+        const MIN_GAP = 0.045
+        let last = -1
+        for (let k = 1; k <= total; k++) {
+          const pf = k / total
+          const when = timeOf(pf) * SPIN_DUR
+          if (k < total && when - last < MIN_GAP) continue
+          last = when
+          const pitch = 760 + 560 * pf // monte de 760 à ~1320 Hz au ralentissement
+          playBlip(ctx, t0 + when, pitch, 0.05, 0.13, 'square')
+        }
+        // Petit "ding" de validation à l'atterrissage
+        playBlip(ctx, t0 + SPIN_DUR + 0.02, 1568, 0.14, 0.18, 'triangle')
+        playBlip(ctx, t0 + SPIN_DUR + 0.11, 2093, 0.20, 0.14, 'triangle')
+      }
+    }
+
     setTimeout(() => {
       setWinner(winItem)
       setSpinPhase('won')
@@ -1149,6 +1276,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
 
   const drawCard = () => {
     if (flipping || !activePlayer || activePlayer.money < 4) return
+    playPurchaseSfx()
     onSpendMoney?.(activePlayer.id, 4)
     setOfferLocked(true)
     setFlipping(true)
@@ -1171,7 +1299,9 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
   const handleInvResult = ({ die1 }) => {
     setDieRolling(false)
     setDieFinal(die1)
-    onModifyPosition?.(activePlayer.id, 7 - die1)
+    const gain = 7 - die1
+    onModifyPosition?.(activePlayer.id, gain)
+    if (gain >= 4) playGoodSfx(); else playBadSfx()
     setApplied(true)
   }
 
@@ -1182,6 +1312,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     if (money < 1) return
     const bet = Math.max(1, Math.min(pariBet, money))
     setPariBet(bet)
+    playPurchaseSfx()
     onSpendMoney?.(activePlayer.id, bet)
     setDieRolling(true)
     setRollCount(c => c + 1)
@@ -1191,7 +1322,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     setDieRolling(false)
     setPariDice({ die1, die2 })
     const win = die1 === pariNumber || die2 === pariNumber
-    if (win) onSpendMoney?.(activePlayer.id, -2 * pariBet)
+    if (win) { onSpendMoney?.(activePlayer.id, -2 * pariBet); playGoodSfx() } else playBadSfx()
     setApplied(true)
   }
 
@@ -1201,6 +1332,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
     setDilemmeChoice(choice)
     if (choice === 'cases') onModifyPosition?.(activePlayer.id, 5)
     else onSpendMoney?.(activePlayer.id, -5)
+    playGoodSfx()
     setApplied(true)
   }
 
@@ -1232,22 +1364,34 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
       const alivePlayers = players.filter(p => (p.diceTotal ?? 0) < 63)
       if (drawn.id === 'weekend_double_xp') {
         alivePlayers.forEach(p => onModifyPosition?.(p.id, 3))
+        playGoodSfx()
       } else if (drawn.id === 'report') {
         alivePlayers.forEach(p => onModifyPosition?.(p.id, -3))
+        playBadSfx()
       } else if (drawn.id === 'soldes') {
         onSetShopDiscount?.(2)
+        playGoodSfx()
       } else if (drawn.id === 'acces_payant') {
         alivePlayers.forEach(p => onSpendMoney?.(p.id, 5))
+        playBadSfx()
       } else if (drawn.id === 'remboursement') {
         alivePlayers.forEach(p => {
           const refund = Math.floor((p.lastPurchaseCost ?? 0) / 2)
           if (refund > 0) onSpendMoney?.(p.id, -refund)
         })
+        playGoodSfx()
       }
     } else {
-      if (drawn.id === 'loot_box') lootEffect.fn()
-      else if (drawn.id === 'eject') onModifyPosition?.(targetId, -6)
-      else if (drawn.id === 'ddos') onSkipTurn?.(ddosOutcome === 'self' ? activePlayer.id : targetId)
+      if (drawn.id === 'loot_box') {
+        lootEffect.fn()
+        if (lootEffect.col === '#22c55e') playGoodSfx(); else playBadSfx()
+      } else if (drawn.id === 'eject') {
+        onModifyPosition?.(targetId, -6)
+        playGoodSfx()
+      } else if (drawn.id === 'ddos') {
+        onSkipTurn?.(ddosOutcome === 'self' ? activePlayer.id : targetId)
+        if (ddosOutcome === 'self') playBadSfx(); else playGoodSfx()
+      }
     }
     setApplied(true)
   }
@@ -1384,7 +1528,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
       {!drawn ? null : drawn.id === 'pari' ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%', maxWidth: '460px', flexShrink: 0 }}>
           <div style={{ width: '100%', height: '150px', borderRadius: '16px', overflow: 'hidden' }}>
-            <DiceScene rollCount={rollCount} onResult={handlePariResult} />
+            <DiceScene rollCount={rollCount} onResult={handlePariResult} muted={muted} />
           </div>
           {pariDice ? (
             <>
@@ -1463,7 +1607,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
       ) : drawn.id === 'inversement' ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%', maxWidth: '320px', flexShrink: 0 }}>
           <div style={{ width: '100%', height: '150px', borderRadius: '16px', overflow: 'hidden' }}>
-            <DiceScene rollCount={rollCount} onResult={handleInvResult} singleDie={true} />
+            <DiceScene rollCount={rollCount} onResult={handleInvResult} singleDie={true} muted={muted} />
           </div>
           {dieFinal ? (
             <>
@@ -1763,7 +1907,7 @@ function EventScreen({ activePlayer, players, onModifyPosition, onSkipTurn, onSp
               {(drawn.id === 'loot_box' || drawn.id === 'ddos') && (
                 <>
                   <div style={{ width: '100%', height: '190px', flexShrink: 0, borderRadius: '16px', overflow: 'hidden' }}>
-                    <DiceScene rollCount={rollCount} onResult={handleDieResult} singleDie={true} />
+                    <DiceScene rollCount={rollCount} onResult={handleDieResult} singleDie={true} muted={muted} />
                   </div>
                   {rollBtn}
                   {drawn.id === 'loot_box' && lootEffect && (

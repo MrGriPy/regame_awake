@@ -14,6 +14,7 @@ export default function GameMat({
   onModifyPosition,
   onSpendMoney,
   onRecordItemUse,
+  musicMuted = false,
 }) {
   const [rollCount, setRollCount] = useState(0);
   const [result, setResult] = useState(null);
@@ -196,7 +197,7 @@ export default function GameMat({
   const rollBtnActive = activePlayer && !isInstantItem && !isFinishedActive;
 
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '460px', marginTop: '60px' }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '460px', marginTop: '60px', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}>
       
       {/* 1. BANDEAU DE JOUER ACTIF EN HAUT */}
       <div style={{
@@ -330,6 +331,7 @@ export default function GameMat({
             extraDie={hasPermExtraDie}
             switchCount={switchCount}
             singleDie={isTeleporteur || isDeMaudit || isInvest || rollingSingleDie}
+            muted={musicMuted}
           />
         </div>
 

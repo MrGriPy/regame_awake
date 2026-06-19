@@ -1,6 +1,7 @@
 import { useRef, useEffect, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { playDiceBounce, playScoreFeedback } from '../sfx';
 
 const FACE_VALUES = [2, 5, 3, 4, 1, 6];
 
@@ -257,6 +258,10 @@ function Die({ rollCount, onRollComplete, bg = '#f8f5f0', dot = '#1a1a2e', posX 
       const preY = getBounceY(btPrev);
       grp.position.y = posY + curY;
 
+      // Son de rebond à chaque impact au sol (intensité décroissante).
+      // Indépendant du mute musique : les feedbacks sonores jouent toujours.
+      if (preY > 0.03 && curY <= 0.03) playDiceBounce(Math.max(0.3, 1 - bt));
+
       if (preY > 0.02 && curY <= 0.02 && bt < STEER_START) s.squashT = 0;
       if (s.squashT >= 0) {
         s.squashT += dt;
@@ -330,6 +335,7 @@ export default function DiceScene({ rollCount, onResult, extraDie = false, switc
           die3: extraDie ? v[2] : undefined,
           total,
         });
+        playScoreFeedback(total, diceCount);
       }
     });
   }
